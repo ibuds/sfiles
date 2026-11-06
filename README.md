@@ -2,6 +2,10 @@
 
 A fast, clean file manager for Android, built with Kotlin and Jetpack Compose.
 
+## Download
+
+Get the latest signed APK from the [Releases page](https://github.com/ibuds/sfiles/releases/latest), then open it on your phone. Android will ask you to allow installs from your browser or file app the first time.
+
 ## Features
 
 - Home screen with category shortcuts (Downloads, Docs, Images, Audio, Videos, Install files), recent files and storage usage
