@@ -1,0 +1,10 @@
+-dontwarn **
+-keep class com.jcraft.jsch.** { *; }
+-keep class com.hierynomus.** { *; }
+-keep class com.rapid7.** { *; }
+-keep class net.engio.** { *; }
+-keep class org.bouncycastle.** { *; }
+-keep class org.apache.commons.net.** { *; }
+-keep class com.google.crypto.tink.** { *; }
+-keep class * extends com.google.crypto.tink.shaded.protobuf.GeneratedMessageLite { *; }
+-keepattributes Signature,InnerClasses,EnclosingMethod
