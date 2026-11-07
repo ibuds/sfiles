@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.FolderZip
+import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -35,6 +37,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -74,13 +77,13 @@ fun FolderIcon(file: File? = null, modifier: Modifier = Modifier) {
 @Composable
 fun SearchPill(onClick: () -> Unit, onVoice: (() -> Unit)?, modifier: Modifier = Modifier) {
     Row(
-        modifier.width(280.dp).clip(CircleShape).background(Bar).clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
+        modifier.width(280.dp).shadow(ShadowElev, CircleShape).background(Bar).clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Filled.Search, null, tint = Muted)
         Spacer(Modifier.width(10.dp))
         Text("Search", color = Muted, fontSize = 16.sp, modifier = Modifier.weight(1f))
-        if (onVoice != null) Icon(Icons.Filled.Mic, null, tint = Muted, modifier = Modifier.clickable { onVoice() })
+        if (onVoice != null) Icon(Icons.Filled.Mic, "Voice search", tint = Muted, modifier = Modifier.clickable { onVoice() })
     }
 }
 
@@ -136,28 +139,31 @@ fun Modifier.dragSelect(
     }
 }
 
+private val archiveExt = setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz")
+
 @Composable
 fun Thumb(file: File, modifier: Modifier = Modifier, remote: Boolean = false) {
     val ctx = LocalContext.current
     val kind = file.kind()
     val shape = RoundedCornerShape(8.dp)
-    if (!remote && (kind == Kind.Images || kind == Kind.Videos)) {
-        val req = androidx.compose.runtime.remember(file) {
-            ImageRequest.Builder(ctx).data(file).size(160)
-                .apply { if (kind == Kind.Videos) decoderFactory(VideoFrameDecoder.Factory()) }.build()
-        }
-        AsyncImage(req, null, modifier.size(48.dp).clip(shape).background(Pill), contentScale = ContentScale.Crop)
-    } else {
-        val (icon, tint) = when (kind) {
-            Kind.Images -> Icons.Outlined.Image to Color(0xFFE8657F)
-            Kind.Videos -> Icons.Outlined.PlayArrow to Color(0xFFB07CF5)
-            Kind.Audio -> Icons.Outlined.MusicNote to Color(0xFF8A93F0)
-            Kind.Docs -> Icons.Outlined.Description to Color(0xFFF0B860)
-            Kind.Apk -> Icons.Outlined.Android to Color(0xFFA4D93A)
-            else -> Icons.Outlined.Description to Muted
-        }
-        Box(modifier.size(48.dp).clip(shape).background(Pill), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = tint, modifier = Modifier.size(26.dp))
+    val (icon, tint) = when {
+        kind == Kind.Images -> Icons.Outlined.Image to Color(0xFFE8657F)
+        kind == Kind.Videos -> Icons.Outlined.PlayArrow to Color(0xFFB07CF5)
+        kind == Kind.Audio -> Icons.Outlined.MusicNote to Color(0xFF8A93F0)
+        kind == Kind.Docs -> Icons.Outlined.Description to Color(0xFFF0B860)
+        kind == Kind.Apk -> Icons.Outlined.Android to Color(0xFFA4D93A)
+        file.extension.lowercase() in archiveExt -> Icons.Outlined.FolderZip to Color(0xFF8E9AAF)
+        else -> Icons.Outlined.InsertDriveFile to Color(0xFF8E9AAF)
+    }
+    // The icon sits underneath, so it shows while a thumbnail loads and whenever one can't be made.
+    Box(modifier.size(48.dp).clip(shape).background(Tile), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = tint, modifier = Modifier.fillMaxSize(0.54f))
+        if (!remote && (kind == Kind.Images || kind == Kind.Videos)) {
+            val req = androidx.compose.runtime.remember(file) {
+                ImageRequest.Builder(ctx).data(file).size(160)
+                    .apply { if (kind == Kind.Videos) decoderFactory(VideoFrameDecoder.Factory()) }.build()
+            }
+            AsyncImage(req, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
     }
 }
@@ -185,7 +191,7 @@ fun EntryRow(
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
-            Text(e.name, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(e.label, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle ?: formatDate(e.modified), fontSize = 13.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(8.dp))
@@ -226,7 +232,7 @@ fun Breadcrumb(dir: File, onNavigate: (File?) -> Unit, modifier: Modifier = Modi
         modifier.fillMaxWidth().clip(CircleShape).background(bg).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.Home, null, tint = Muted, modifier = Modifier.size(22.dp).clickable { onNavigate(null) })
+        Icon(Icons.Filled.Home, "Home", tint = Muted, modifier = Modifier.size(22.dp).clickable { onNavigate(null) })
         Sep()
         val rootLast = parts.isEmpty()
         Text(

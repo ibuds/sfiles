@@ -43,24 +43,21 @@ private val cats = listOf(
 )
 
 @Composable
-fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onTrash: () -> Unit, onNetwork: () -> Unit, onSettings: () -> Unit, onCategory: (Category) -> Unit, onFolder: (File) -> Unit, onOpenFile: (File) -> Unit, onSearch: () -> Unit) {
+fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavorites: () -> Unit, onTrash: () -> Unit, onNetwork: () -> Unit, onSettings: () -> Unit, onCategory: (Category) -> Unit, onFolder: (File) -> Unit, onOpenFile: (File) -> Unit, onSearch: () -> Unit) {
     val ctx = LocalContext.current
-    val recent by produceState(emptyList<Entry>()) { value = withContext(Dispatchers.IO) { Fs.recent(ctx) } }
+    val recentOrNull by produceState<List<Entry>?>(null) { value = withContext(Dispatchers.IO) { Fs.recent(ctx) } }
+    val recent = recentOrNull ?: emptyList()
+    val favs by produceState<List<Entry>>(emptyList(), Fs.favorites, Fs.showHidden) { value = withContext(Dispatchers.IO) { Fs.favoriteEntries() } }
     val vols = remember(volTick) { Fs.vols }
     val connCount by produceState(0, volTick) { value = withContext(Dispatchers.IO) { ConnStore.all(ctx).size } }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = 16.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("SFiles", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Box {
-                    var menu by remember { mutableStateOf(false) }
-                    Icon(Icons.Filled.MoreVert, null, modifier = Modifier.padding(end = 4.dp).clickable { menu = true })
-                    androidx.compose.material3.DropdownMenu(menu, { menu = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
-                        androidx.compose.material3.DropdownMenuItem({ Text("Settings", fontSize = 17.sp) }, { menu = false; onSettings() })
-                    }
-                }
+                OverflowMenu { close -> MenuItem("Settings") { close(); onSettings() } }
             }
+            Column(Modifier.padding(horizontal = 16.dp)) {
             // Categories
             Card {
                 Column(Modifier.padding(vertical = 8.dp, horizontal = 12.dp)) {
@@ -84,23 +81,10 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onTrash:
                 }
             }
             Spacer(Modifier.height(12.dp))
-            // Recent files
-            Card {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Recent files", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.clickable { onRecent() })
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        recent.forEach { e ->
-                            Column(Modifier.width(82.dp).clickable { onOpenFile(e.file) }) {
-                                Thumb(e.file, Modifier.size(82.dp))
-                                Text(e.name, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                            }
-                        }
-                    }
-                }
+            ThumbCard("Recent files", onRecent, recentOrNull != null && recent.isEmpty(), "No recent files", recent, onOpenFile)
+            Spacer(Modifier.height(12.dp))
+            ThumbCard("Favorites", onFavorites, favs.isEmpty(), "No favorites yet. Select items, then More > Add to favorites.", favs) { f ->
+                if (f.isDirectory) onFolder(f) else onOpenFile(f)
             }
             SectionLabel("Storage")
             Card {
@@ -134,6 +118,7 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onTrash:
                 }
             }
             Spacer(Modifier.height(100.dp))
+            }
         }
         SearchPill(onSearch, onVoice, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp))
     }
@@ -145,8 +130,7 @@ private fun Card(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SectionLabel(t: String) =
-    Text(t, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp, top = 20.dp, bottom = 8.dp))
+private fun SectionLabel(t: String) = SectionTitle(t, Modifier.padding(start = 8.dp, top = 20.dp, bottom = 8.dp))
 
 @Composable
 private fun StorageRow(icon: ImageVector, title: String, sub: String?, onClick: () -> Unit = {}) {
@@ -156,6 +140,30 @@ private fun StorageRow(icon: ImageVector, title: String, sub: String?, onClick: 
         Column {
             Text(title, fontSize = 16.sp)
             if (sub != null) Text(sub, fontSize = 13.sp, color = Muted)
+        }
+    }
+}
+
+/** Titled card with a horizontal row of thumbnails; the whole title row opens the full list. */
+@Composable
+private fun ThumbCard(title: String, onTitle: () -> Unit, empty: Boolean, emptyText: String, items: List<Entry>, onItem: (File) -> Unit) {
+    Card {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).clip(RoundedCornerShape(12.dp)).clickable { onTitle() }, verticalAlignment = Alignment.CenterVertically) {
+                Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Icon(Icons.Outlined.ChevronRight, "See all")
+            }
+            Spacer(Modifier.height(12.dp))
+            if (empty) Text(emptyText, fontSize = 14.sp, color = Muted, modifier = Modifier.padding(bottom = 4.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items.forEach { e ->
+                    Column(Modifier.width(82.dp).clickable { onItem(e.file) }) {
+                        if (e.isDir) Box(Modifier.size(82.dp).clip(RoundedCornerShape(8.dp)).background(Tile), contentAlignment = Alignment.Center) { FolderIcon() }
+                        else Thumb(e.file, Modifier.size(82.dp))
+                        Text(e.label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
         }
     }
 }

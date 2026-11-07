@@ -15,16 +15,16 @@ import androidx.core.view.WindowCompat
 
 data class Palette(
     val bg: Color, val card: Color, val pill: Color, val sheet: Color, val menu: Color,
-    val divider: Color, val muted: Color, val accent: Color, val bar: Color, val chip: Color,
+    val divider: Color, val muted: Color, val accent: Color, val bar: Color, val chip: Color, val tile: Color,
 )
 
 val DarkPalette = Palette(
     bg = Color(0xFF000000), card = Color(0xFF171717), pill = Color(0xFF1F1F1F), sheet = Color(0xFF2B2B2B), menu = Color(0xFF2C2C2E),
-    divider = Color(0xFF3A3A3A), muted = Color(0xFFA0A0A0), accent = Color(0xFF4C93FF), bar = Color(0xFF262626), chip = Color(0xFF3A3A3A),
+    divider = Color(0xFF3A3A3A), muted = Color(0xFFA0A0A0), accent = Color(0xFF4C93FF), bar = Color(0xFF262626), chip = Color(0xFF3A3A3A), tile = Color(0xFF262626),
 )
 val LightPalette = Palette(
     bg = Color(0xFFF4F4F6), card = Color(0xFFFFFFFF), pill = Color(0xFFFFFFFF), sheet = Color(0xFFF2F2F5), menu = Color(0xFFFFFFFF),
-    divider = Color(0xFFDADADF), muted = Color(0xFF6E6E73), accent = Color(0xFF1F6FEB), bar = Color(0xFFFFFFFF), chip = Color(0xFFE3E4E9),
+    divider = Color(0xFFDADADF), muted = Color(0xFF6E6E73), accent = Color(0xFF1F6FEB), bar = Color(0xFFFFFFFF), chip = Color(0xFFE3E4E9), tile = Color(0xFFEEEFF3),
 )
 
 val LocalPalette = staticCompositionLocalOf { DarkPalette }
@@ -39,6 +39,7 @@ val Muted: Color @Composable get() = LocalPalette.current.muted
 val Accent: Color @Composable get() = LocalPalette.current.accent
 val Bar: Color @Composable get() = LocalPalette.current.bar
 val Chip: Color @Composable get() = LocalPalette.current.chip
+val Tile: Color @Composable get() = LocalPalette.current.tile
 
 @Composable
 fun SFilesTheme(content: @Composable () -> Unit) {

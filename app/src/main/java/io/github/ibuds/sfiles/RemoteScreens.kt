@@ -49,16 +49,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
-@Composable
-private fun Top(title: String?, onBack: () -> Unit, trailing: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
-        if (title != null) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.weight(1f))
-        trailing()
-    }
-}
-
 /** List of saved connections, or the empty state with the add button. */
 @Composable
 fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit, onAdd: (Proto) -> Unit, onEdit: (Conn) -> Unit) {
@@ -69,26 +59,19 @@ fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit, onAdd: (Proto) -> 
     var menuFor by remember { mutableStateOf<Conn?>(null) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Top(null, onBack) {
-            if (conns.isNotEmpty()) TextButton({ addDialog = true }) { Text("Add", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp) }
+        ScreenHeader("Network storage", onBack) {
+            if (conns.isNotEmpty()) TextButton({ addDialog = true }) { Text("Add", fontSize = 16.sp) }
         }
-        Row(
-            Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(CircleShape).background(Pill).padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Home, null, tint = Muted, modifier = Modifier.size(22.dp).clickable { onBack() })
-            Icon(Icons.Outlined.ChevronRight, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
-            Text("Network storage", fontSize = 15.sp, color = Accent, fontWeight = FontWeight.Bold)
-        }
+        HomeCrumb("Network storage", onBack)
         if (conns.isEmpty()) {
-            Column(Modifier.fillMaxSize().padding(32.dp), Arrangement.Center, Alignment.CenterHorizontally) {
-                Text("Access servers and network drives from your phone by adding them to SFiles.", fontSize = 17.sp, color = Muted, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(24.dp))
+            EmptyState(
+                "No network storage", "Access servers and network drives from your phone by adding them to SFiles.",
+                Modifier.padding(bottom = 80.dp),
+            ) {
                 Text(
-                    "Add network storage", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium,
+                    "Add network storage", fontSize = 18.sp, fontWeight = FontWeight.Medium,
                     modifier = Modifier.clip(CircleShape).background(Pill).clickable { addDialog = true }.padding(horizontal = 24.dp, vertical = 16.dp),
                 )
-                Spacer(Modifier.height(80.dp))
             }
         } else LazyColumn(Modifier.fillMaxSize().padding(top = 8.dp)) {
             items(conns, key = { it.id }) { c ->
@@ -97,7 +80,7 @@ fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit, onAdd: (Proto) -> 
                     Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(c) }, onLongClick = { menuFor = c }).padding(horizontal = 24.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Outlined.Dns, null, modifier = Modifier.size(28.dp))
+                    Icon(Icons.Outlined.Dns, null, modifier = Modifier.size(26.dp))
                     Spacer(Modifier.width(18.dp))
                     Column {
                         Text(c.name, fontSize = 17.sp)
@@ -108,7 +91,7 @@ fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit, onAdd: (Proto) -> 
         }
     }
     if (addDialog) androidx.compose.ui.window.Dialog({ addDialog = false }) {
-        Column(Modifier.clip(RoundedCornerShape(32.dp)).background(Sheet).padding(vertical = 24.dp)) {
+        Column(Modifier.clip(RoundedCornerShape(28.dp)).background(Sheet).padding(vertical = 24.dp)) {
             Text("Add network storage", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             Proto.values().forEach { p ->
                 Text(
@@ -165,7 +148,7 @@ fun ConnFormScreen(proto: Proto, existing: Conn?, onDone: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
-        Top(proto.label, onDone)
+        ScreenHeader(proto.label, onDone)
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Field("Name (optional)", name) { name = it }
             Field("Server address", host, KeyboardType.Uri) { host = it }
@@ -182,10 +165,10 @@ fun ConnFormScreen(proto: Proto, existing: Conn?, onDone: () -> Unit) {
             }
             error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 14.sp) }
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton(onDone, enabled = !busy) { Text("Cancel", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface) }
-                TextButton(::save, enabled = !busy) {
-                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Text("Save", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+                TextButton(onDone, enabled = !busy) { Text("Cancel", fontSize = 17.sp) }
+                Button(::save, enabled = !busy) {
+                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                    else Text("Save", fontSize = 17.sp)
                 }
             }
         }
@@ -259,7 +242,7 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty() || cur == null) return@rememberLauncherForActivityResult
-        run("Uploaded ${uris.size} file(s)") { fs ->
+        run("Uploaded ${itemsText(uris.size)}") { fs ->
             for (u in uris) {
                 val name = ctx.contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                     if (c.moveToFirst()) c.getString(0) else null
@@ -274,28 +257,15 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             if (selectMode) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        Modifier.clip(CircleShape).background(Pill).clickable {
-                            selected = if (selected.size == items.size) emptySet() else items.map { it.path }.toSet()
-                        }.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Check(selected.isNotEmpty() && selected.size == items.size)
-                        Spacer(Modifier.width(12.dp)); Text("${selected.size}", fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Text("Cancel", fontSize = 18.sp, modifier = Modifier.clip(CircleShape).background(Pill).clickable { clear() }.padding(horizontal = 24.dp, vertical = 12.dp))
-                }
+                SelectionTopBar(selected.size, selected.isNotEmpty() && selected.size == items.size, {
+                    selected = if (selected.size == items.size) emptySet() else items.map { it.path }.toSet()
+                }) { clear() }
             } else {
-                Top(null, onBack) {
-                    Box {
-                        IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, null) }
-                        DropdownMenu(menu, { menu = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
-                            DropdownMenuItem({ Text("Upload files", fontSize = 17.sp) }, { menu = false; picker.launch(arrayOf("*/*")) })
-                            DropdownMenuItem({ Text("New folder", fontSize = 17.sp) }, { menu = false; dlg = RDlg.NewFolder })
-                            DropdownMenuItem({ Text("Refresh", fontSize = 17.sp) }, { menu = false; tick++ })
-                        }
+                ScreenHeader(null, onBack) {
+                    OverflowMenu { close ->
+                        MenuItem("Upload files") { close(); picker.launch(arrayOf("*/*")) }
+                        MenuItem("New folder") { close(); dlg = RDlg.NewFolder }
+                        MenuItem("Refresh") { close(); tick++ }
                     }
                 }
             }
@@ -325,12 +295,10 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             when {
                 listing == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-                listing!!.isFailure -> Column(Modifier.fillMaxSize().padding(32.dp), Arrangement.Center, Alignment.CenterHorizontally) {
-                    Text("Couldn't load this folder", fontSize = 18.sp)
-                    Text(listing!!.exceptionOrNull()?.message ?: "", color = Muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
-                    TextButton({ holder[0]?.let { f -> Thread { runCatching { f.close() } }.start() }; holder[0] = null; tick++ }) { Text("Retry", color = MaterialTheme.colorScheme.onSurface) }
+                listing!!.isFailure -> EmptyState("Couldn't load this folder", listing!!.exceptionOrNull()?.message ?: "") {
+                    TextButton({ holder[0]?.let { f -> Thread { runCatching { f.close() } }.start() }; holder[0] = null; tick++ }) { Text("Retry") }
                 }
-                items.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No files", color = Muted) }
+                items.isEmpty() -> EmptyState("No files")
                 else -> LazyColumn(
                     Modifier.fillMaxSize().dragSelect(listState, paths, selected, { selected = it }, { selectMode = true }),
                     state = listState, contentPadding = PaddingValues(bottom = 110.dp),
@@ -360,21 +328,17 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
             enter = slideInVertically(tween(260)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
         ) {
-            Row(
-                Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)
-                    .fillMaxWidth().clip(CircleShape).background(Bar).padding(vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
+            ActionBar {
                 val has = sel.isNotEmpty()
-                RAction(Icons.Outlined.Download, "Download", has) {
+                BarAction(Icons.Outlined.Download, "Download", has) {
                     val s = sel
                     run("Saved to Download") { fs ->
                         val dest = File(Fs.root, "Download").apply { mkdirs() }
                         s.forEach { fs.downloadTree(it, dest) }
                     }
                 }
-                RAction(Icons.Outlined.DriveFileRenameOutline, "Rename", sel.size == 1) { dlg = RDlg.Rename(sel[0]) }
-                RAction(Icons.Outlined.Delete, "Delete", has) { dlg = RDlg.Delete }
+                BarAction(Icons.Outlined.DriveFileRenameOutline, "Rename", sel.size == 1) { dlg = RDlg.Rename(sel[0]) }
+                BarAction(Icons.Outlined.Delete, "Delete", has) { dlg = RDlg.Delete }
             }
         }
     }
@@ -403,21 +367,10 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
         RDlg.Delete -> AlertDialog(
             onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
             title = { Text("Delete permanently?", fontWeight = FontWeight.Bold) },
-            text = { Text("${sel.size} item(s) will be deleted from the server. This can't be undone.") },
+            text = { Text("${itemsText(sel.size)} will be deleted from the server. This can't be undone.") },
             confirmButton = { TextButton({ dlg = null; val s = sel; run("Deleted") { fs -> s.forEach { fs.delete(it) } } }) { Text("Delete") } },
             dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
         )
         null -> {}
-    }
-}
-
-@Composable
-private fun RAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier.clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 18.dp, vertical = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        val c = if (enabled) MaterialTheme.colorScheme.onSurface else Color(0xFF666666)
-        Icon(icon, null, tint = c, modifier = Modifier.size(24.dp)); Text(label, fontSize = 12.sp, color = c)
     }
 }

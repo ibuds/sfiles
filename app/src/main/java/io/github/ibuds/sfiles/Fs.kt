@@ -17,7 +17,7 @@ import java.util.zip.ZipOutputStream
 
 enum class SortBy(val label: String) { Name("Name"), Type("Type"), Date("Date"), Size("Size") }
 enum class Kind(val label: String) { All("All"), Images("Images"), Videos("Videos"), Audio("Audio"), Docs("Documents"), Apk("Install files"), Other("Other") }
-enum class Category(val label: String) { Downloads("Downloads"), Docs("Docs"), Images("Images"), Audio("Audio"), Videos("Videos"), Apk("Install files"), Recent("Recent files") }
+enum class Category(val label: String) { Downloads("Downloads"), Docs("Docs"), Images("Images"), Audio("Audio"), Videos("Videos"), Apk("Install files"), Recent("Recent files"), Favorites("Favorites") }
 
 data class Entry(val file: File, val isDir: Boolean, val modified: Long, val size: Long, val count: Int) {
     val name: String get() = file.name
@@ -46,8 +46,22 @@ object Fs {
         prefs = ctx.getSharedPreferences("sfiles", Context.MODE_PRIVATE)
         themeMode = prefs!!.getInt("themeMode", 0)
         showHidden = prefs!!.getBoolean("showHidden", false)
+        hideExt = prefs!!.getBoolean("hideExt", false)
+        favorites = prefs!!.getString("favorites", "")!!.split("\n").filter { it.isNotEmpty() }
     }
     fun updateShowHidden(v: Boolean) { showHidden = v; prefs?.edit()?.putBoolean("showHidden", v)?.apply() }
+
+    var hideExt by androidx.compose.runtime.mutableStateOf(false)
+    fun updateHideExt(v: Boolean) { hideExt = v; prefs?.edit()?.putBoolean("hideExt", v)?.apply() }
+
+    /** Favourite file and folder paths, newest first. */
+    var favorites by androidx.compose.runtime.mutableStateOf(listOf<String>())
+    fun setFavorite(paths: Collection<String>, on: Boolean) {
+        favorites = if (on) paths.filter { it !in favorites } + favorites else favorites - paths.toSet()
+        prefs?.edit()?.putString("favorites", favorites.joinToString("\n"))?.apply()
+    }
+    fun favoriteEntries(): List<Entry> = favorites.map(::File)
+        .filter { it.exists() && (showHidden || !it.name.startsWith(".")) }.map(::entryOf)
 
     data class TrashItem(val entry: Entry, val original: File, val deletedAt: Long)
     private fun records(): MutableSet<String> = (prefs?.getStringSet("trash", emptySet()) ?: emptySet()).toMutableSet()
@@ -59,10 +73,10 @@ object Fs {
         if (f.exists()) TrashItem(entryOf(f), File(orig), t.toLongOrNull() ?: 0L) else null
     }.sortedByDescending { it.deletedAt }
 
-    fun restore(item: TrashItem): Boolean {
+    fun restore(item: TrashItem, onBytes: (Long) -> Unit = {}): Boolean {
         val dir = item.original.parentFile ?: root
         dir.mkdirs()
-        val ok = move(item.entry.file, dir)
+        val ok = move(item.entry.file, dir, onBytes)
         if (ok) saveRecords(records().filterNot { it.startsWith(item.entry.name + "|") }.toSet())
         return ok
     }
@@ -82,12 +96,18 @@ object Fs {
     fun refresh(ctx: Context) {
         val sm = ctx.getSystemService(Context.STORAGE_SERVICE) as android.os.storage.StorageManager
         val found = sm.storageVolumes.filter { it.state == Environment.MEDIA_MOUNTED }.mapNotNull { v ->
-            val d = v.directory ?: return@mapNotNull null
+            val d = volumeDir(v) ?: return@mapNotNull null
             Vol(d, if (v.isPrimary) "Internal storage" else (v.getDescription(ctx) ?: "USB drive"), !v.isPrimary, v.uuid,
                 if (v.isPrimary) null else fsType(v.uuid, d))
         }
         vols = if (found.any { !it.removable }) found else listOf(Vol(root, "Internal storage", false)) + found
     }
+
+    /** StorageVolume.getDirectory() only exists on Android 11+; older versions expose the path through getPath(). */
+    @Suppress("DiscouragedPrivateApi")
+    private fun volumeDir(v: android.os.storage.StorageVolume): File? =
+        if (android.os.Build.VERSION.SDK_INT >= 30) v.directory
+        else try { (v.javaClass.getMethod("getPath").invoke(v) as? String)?.let(::File) } catch (_: Exception) { null }
 
     /** Looks up the filesystem of a removable volume in the mount table (best effort, null if unknown). */
     private fun fsType(uuid: String?, dir: File): String? {
@@ -148,6 +168,7 @@ object Fs {
         val args: Array<String>?
         when (cat) {
             Category.Recent -> return recent(ctx, 300)
+            Category.Favorites -> return favoriteEntries()
             Category.Images -> { sel = "${MediaStore.Files.FileColumns.MEDIA_TYPE}=1"; args = null }
             Category.Audio -> { sel = "${MediaStore.Files.FileColumns.MEDIA_TYPE}=2"; args = null }
             Category.Videos -> { sel = "${MediaStore.Files.FileColumns.MEDIA_TYPE}=3"; args = null }
@@ -220,47 +241,71 @@ object Fs {
     private fun intoSelf(src: File, dstDir: File) =
         src.isDirectory && (dstDir.absolutePath == src.absolutePath || dstDir.absolutePath.startsWith(src.absolutePath + "/"))
 
-    fun copy(src: File, dstDir: File): Boolean {
-        if (intoSelf(src, dstDir)) return false
-        return src.copyRecursively(unique(dstDir, src.name), overwrite = false)
+    private fun copyTree(s: File, t: File, onBytes: (Long) -> Unit): Boolean {
+        if (s.isDirectory) {
+            if (!t.mkdirs() && !t.isDirectory) return false
+            var ok = true
+            s.listFiles()?.forEach { ok = copyTree(it, File(t, it.name), onBytes) && ok }
+            return ok
+        }
+        s.inputStream().use { i -> t.outputStream().use { o ->
+            val buf = ByteArray(256 * 1024)
+            while (true) { val n = i.read(buf); if (n < 0) break; o.write(buf, 0, n); onBytes(n.toLong()) }
+        } }
+        return true
     }
 
-    fun move(src: File, dstDir: File): Boolean {
+    fun copy(src: File, dstDir: File, onBytes: (Long) -> Unit = {}): Boolean {
+        if (intoSelf(src, dstDir)) return false
+        val t = unique(dstDir, src.name)
+        try { return copyTree(src, t, onBytes) } catch (e: OpCancelled) { t.deleteRecursively(); throw e }
+    }
+
+    fun move(src: File, dstDir: File, onBytes: (Long) -> Unit = {}): Boolean {
         if (intoSelf(src, dstDir)) return false
         val t = unique(dstDir, src.name)
         if (src.renameTo(t)) return true
-        return src.copyRecursively(t) && src.deleteRecursively()
+        try { return copyTree(src, t, onBytes) && src.deleteRecursively() } catch (e: OpCancelled) { t.deleteRecursively(); throw e }
     }
 
     /** Never creates a trash folder on removable drives: those items are deleted permanently. */
-    fun trash(src: File): Boolean {
-        if (isRemovable(src)) return src.deleteRecursively()
+    fun trash(src: File, onBytes: (Long) -> Unit = {}): Boolean {
+        if (isRemovable(src)) { val s = treeSize(src); return src.deleteRecursively().also { onBytes(s) } }
         trashDir.mkdirs()
         val t = unique(trashDir, src.name)
-        val ok = move(src, trashDir)
+        val ok = move(src, trashDir, onBytes)
         if (ok) saveRecords(records().apply { add("${t.name}|${src.absolutePath}|${System.currentTimeMillis()}") })
         return ok
     }
 
     fun rename(src: File, newName: String): Boolean {
         val t = File(src.parentFile, newName)
-        return newName.isNotBlank() && !t.exists() && src.renameTo(t)
+        val ok = newName.isNotBlank() && !t.exists() && src.renameTo(t)
+        if (ok && src.absolutePath in favorites) {
+            val old = src.absolutePath
+            setFavorite(listOf(old), false); setFavorite(listOf(t.absolutePath), true)
+        }
+        return ok
     }
 
-    fun zip(files: List<File>, dstDir: File): File {
+    fun zip(files: List<File>, dstDir: File, onBytes: (Long) -> Unit = {}): File {
         val first = files.first()
         val name = if (files.size == 1) first.nameWithoutExtension.ifEmpty { first.name } else "Archive"
         val out = unique(dstDir, "$name.zip")
-        ZipOutputStream(out.outputStream().buffered()).use { zos ->
+        try { ZipOutputStream(out.outputStream().buffered()).use { zos ->
             for (f in files) {
                 val parent = f.parentFile!!
                 f.walkTopDown().forEach { p ->
                     val rel = p.relativeTo(parent).path
                     if (p.isDirectory) zos.putNextEntry(ZipEntry("$rel/")).also { zos.closeEntry() }
-                    else { zos.putNextEntry(ZipEntry(rel)); p.inputStream().use { it.copyTo(zos) }; zos.closeEntry() }
+                    else {
+                        zos.putNextEntry(ZipEntry(rel))
+                        p.inputStream().use { i -> val buf = ByteArray(64 * 1024); while (true) { val n = i.read(buf); if (n < 0) break; zos.write(buf, 0, n); onBytes(n.toLong()) } }
+                        zos.closeEntry()
+                    }
                 }
             }
-        }
+        } } catch (e: OpCancelled) { out.delete(); throw e }
         return out
     }
 
@@ -300,3 +345,6 @@ fun formatDate(ms: Long): String {
 }
 
 fun formatItems(n: Int) = if (n == 1) "1 item" else "$n items"
+
+/** File name as shown in lists: without the extension when "Hide file extensions" is on. */
+val Entry.label: String get() = if (!isDir && Fs.hideExt) file.nameWithoutExtension.ifEmpty { name } else name

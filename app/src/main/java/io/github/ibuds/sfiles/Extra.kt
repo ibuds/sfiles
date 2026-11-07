@@ -34,28 +34,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-private fun TopBack(title: String?, onBack: () -> Unit, trailing: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
-        if (title != null) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.weight(1f))
-        trailing()
-    }
-}
-
-@Composable
-private fun HomeCrumb(label: String, onHome: () -> Unit) {
-    Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(CircleShape).background(Pill).padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Filled.Home, null, tint = Muted, modifier = Modifier.size(22.dp).clickable { onHome() })
-        Icon(Icons.Outlined.ChevronRight, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
-        Text(label, fontSize = 15.sp, color = Accent, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
 fun TrashScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -72,32 +50,29 @@ fun TrashScreen(onBack: () -> Unit) {
     val paths = remember(list) { list.map { it.entry.path } }
     BackHandler(selected.isNotEmpty()) { selected = emptySet() }
 
-    fun run(block: () -> Unit) = scope.launch {
-        withContext(Dispatchers.IO) { block() }
-        selected = emptySet(); tick++
+    fun op(title: String, done: String, files: List<java.io.File>, block: ((Long) -> Unit) -> Unit) {
+        val started = Ops.run(ctx, OpJob(title, done, files, { cb -> block(cb); null }) { msg ->
+            if (msg != null) Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+            selected = emptySet(); tick++
+        })
+        if (started) selected = emptySet() else Toast.makeText(ctx, "Another operation is still running", Toast.LENGTH_SHORT).show()
     }
+    fun forever(items: List<Fs.TrashItem>, cb: (Long) -> Unit) = items.forEach { cb(0); val n = Fs.treeSize(it.entry.file); Fs.deleteForever(it); cb(n) }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            TopBack("Trash", onBack) {
-                var menu by remember { mutableStateOf(false) }
-                Box {
-                    IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, null) }
-                    DropdownMenu(menu, { menu = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
-                        DropdownMenuItem({ Text("Empty trash", fontSize = 17.sp) }, { menu = false; emptyAll = true })
-                    }
+            if (selected.isNotEmpty()) {
+                SelectionTopBar(selected.size, selected.size == list.size, {
+                    selected = if (selected.size == list.size) emptySet() else list.map { it.entry.path }.toSet()
+                }) { selected = emptySet() }
+            } else {
+                ScreenHeader("Trash", onBack) {
+                    OverflowMenu { close -> MenuItem("Empty trash") { close(); emptyAll = true } }
                 }
             }
             HomeCrumb("Trash", onBack)
             if (items != null && list.isEmpty()) {
-                Column(Modifier.fillMaxSize().padding(32.dp), Arrangement.Center, Alignment.CenterHorizontally) {
-                    Text("No files or folders", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Any files or folders you delete will stay in the Trash for 30 days before they're deleted forever.",
-                        fontSize = 15.sp, color = Muted, textAlign = TextAlign.Center,
-                    )
-                }
+                EmptyState("No files or folders", "Any files or folders you delete will stay in the Trash for 30 days before they're deleted forever.")
             } else LazyColumn(
                 Modifier.fillMaxSize().dragSelect(listState, paths, selected, { selected = it }, {}),
                 state = listState, contentPadding = PaddingValues(top = 8.dp, bottom = 110.dp),
@@ -117,13 +92,12 @@ fun TrashScreen(onBack: () -> Unit) {
             enter = slideInVertically(tween(260)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
         ) {
-            Row(
-                Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)
-                    .fillMaxWidth().clip(CircleShape).background(Bar).padding(vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                TrashAction(Icons.Outlined.Restore, "Restore") { val s = sel; run { s.forEach { Fs.restore(it) } } }
-                TrashAction(Icons.Outlined.Delete, "Delete") { confirm = true }
+            ActionBar {
+                BarAction(Icons.Outlined.Restore, "Restore") {
+                    val s = sel
+                    op("Restoring ${itemsText(s.size)}", "Restored ${itemsText(s.size)}", s.map { it.entry.file }) { cb -> s.forEach { cb(0); Fs.restore(it, cb) } }
+                }
+                BarAction(Icons.Outlined.Delete, "Delete") { confirm = true }
             }
         }
     }
@@ -131,23 +105,16 @@ fun TrashScreen(onBack: () -> Unit) {
         onDismissRequest = { emptyAll = false }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
         title = { Text("Empty trash?", fontWeight = FontWeight.Bold) },
         text = { Text("Everything in the trash will be deleted permanently.") },
-        confirmButton = { TextButton({ emptyAll = false; run { Fs.trashItems().forEach { Fs.deleteForever(it) } } }) { Text("Empty") } },
+        confirmButton = { TextButton({ emptyAll = false; val all = Fs.trashItems(); op("Emptying trash", "Trash emptied", all.map { it.entry.file }) { cb -> forever(all, cb) } }) { Text("Empty") } },
         dismissButton = { TextButton({ emptyAll = false }) { Text("Cancel") } },
     )
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
         title = { Text("Delete forever?", fontWeight = FontWeight.Bold) },
-        text = { Text("${sel.size} item(s) will be deleted permanently.") },
-        confirmButton = { TextButton({ confirm = false; val s = sel; run { s.forEach { Fs.deleteForever(it) } } }) { Text("Delete") } },
+        text = { Text("${itemsText(sel.size)} will be deleted permanently.") },
+        confirmButton = { TextButton({ confirm = false; val s = sel; op("Deleting ${itemsText(s.size)}", "Deleted ${itemsText(s.size)}", s.map { it.entry.file }) { cb -> forever(s, cb) } }) { Text("Delete") } },
         dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
     )
-}
-
-@Composable
-private fun TrashAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
-    Column(Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, null, modifier = Modifier.size(24.dp)); Text(label, fontSize = 12.sp)
-    }
 }
 
 @Composable
@@ -157,27 +124,21 @@ fun SettingsScreen(onBack: () -> Unit) {
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "1.0" }
     val modes = listOf("Follow device settings", "Light", "Dark")
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        TopBack("SFiles settings", onBack)
-        Text("Appearance", fontSize = 14.sp, color = Muted, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 32.dp, top = 16.dp, bottom = 8.dp))
+        ScreenHeader("Settings", onBack)
+        SectionTitle("Appearance", Modifier.padding(start = 24.dp, top = 16.dp, bottom = 8.dp))
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card)) {
             Column(Modifier.fillMaxWidth().clickable { themeDialog = true }.padding(horizontal = 24.dp, vertical = 18.dp)) {
                 Text("Theme", fontSize = 18.sp)
                 Text(modes[Fs.themeMode], fontSize = 13.sp, color = Accent)
             }
         }
-        Text("File management", fontSize = 14.sp, color = Muted, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 32.dp, top = 24.dp, bottom = 8.dp))
-        Row(
-            Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card)
-                .clickable { Fs.updateShowHidden(!Fs.showHidden) }.padding(horizontal = 24.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Show hidden files", fontSize = 18.sp)
-                Text("Files and folders starting with a dot", fontSize = 13.sp, color = Muted)
-            }
-            Switch(Fs.showHidden, { Fs.updateShowHidden(it) })
+        SectionTitle("File management", Modifier.padding(start = 24.dp, top = 24.dp, bottom = 8.dp))
+        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card)) {
+            ToggleRow("Show hidden files", Fs.showHidden) { Fs.updateShowHidden(it) }
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp), thickness = 0.7.dp, color = Divider)
+            ToggleRow("Hide file extensions", Fs.hideExt) { Fs.updateHideExt(it) }
         }
-        Text("About", fontSize = 14.sp, color = Muted, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 32.dp, top = 24.dp, bottom = 8.dp))
+        SectionTitle("About", Modifier.padding(start = 24.dp, top = 24.dp, bottom = 8.dp))
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card).padding(horizontal = 24.dp, vertical = 18.dp)) {
             Text("Version", fontSize = 18.sp)
             Text(version, fontSize = 13.sp, color = Muted)
@@ -199,6 +160,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton({ themeDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurface) } },
+        confirmButton = { TextButton({ themeDialog = false }) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 18.sp, modifier = Modifier.weight(1f))
+        Switch(checked, onChange)
+    }
 }

@@ -60,13 +60,31 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        granted = Environment.isExternalStorageManager()
+        granted = hasAllFiles()
+        if (granted && android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            !getPreferences(MODE_PRIVATE).getBoolean("askedNotif", false)) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("askedNotif", true).apply()
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2) // so copy progress can show in the shade
+        }
         Fs.refresh(this); volTick++
         val f = android.content.IntentFilter().apply {
             listOf(Intent.ACTION_MEDIA_MOUNTED, Intent.ACTION_MEDIA_UNMOUNTED, Intent.ACTION_MEDIA_EJECT, Intent.ACTION_MEDIA_REMOVED).forEach(::addAction)
             addDataScheme("file")
         }
         androidx.core.content.ContextCompat.registerReceiver(this, volReceiver, f, androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
+    }
+
+    private fun hasAllFiles(): Boolean =
+        if (android.os.Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
+        else listOf(android.Manifest.permission.READ_EXTERNAL_STORAGE, android.Manifest.permission.WRITE_EXTERNAL_STORAGE).all {
+            checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        granted = hasAllFiles()
+        Fs.refresh(this); volTick++
     }
 
     override fun onPause() { super.onPause(); runCatching { unregisterReceiver(volReceiver) } }
@@ -81,7 +99,12 @@ private fun PermissionGate() {
         Text("SFiles needs this permission to browse and manage the files on your phone.", textAlign = TextAlign.Center, color = Muted)
         Spacer(Modifier.height(24.dp))
         Button({
-            ctx.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${ctx.packageName}")))
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                ctx.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${ctx.packageName}")))
+            } else {
+                (ctx as android.app.Activity).requestPermissions(arrayOf(
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE, android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 1)
+            }
         }) { Text("Continue") }
     }
 }
@@ -112,6 +135,7 @@ private fun App(volTick: Int) {
     var prevSize by remember { mutableIntStateOf(stack.size) }
     val forward = stack.size >= prevSize
     SideEffect { prevSize = stack.size }
+    Box(Modifier.fillMaxSize()) {
     AnimatedContent(
         targetState = stack.last(),
         transitionSpec = {
@@ -128,6 +152,7 @@ private fun App(volTick: Int) {
             volTick,
             onVoice = startVoice,
             onRecent = { stack.add(Screen.Cat(Category.Recent)) },
+            onFavorites = { stack.add(Screen.Cat(Category.Favorites)) },
             onTrash = { stack.add(Screen.Trash) },
             onNetwork = { stack.add(Screen.Network) },
             onSettings = { stack.add(Screen.Settings) },
@@ -151,5 +176,7 @@ private fun App(volTick: Int) {
         is Screen.Cat -> BrowserScreen(null, s.c, ::openFolder, { stack.removeLast() }, { stack.add(Screen.Search()) }, { stack.add(Screen.Settings) }, startVoice)
     }
         }
+    }
+    Ops.progress?.let { OpProgressCard(it, { Ops.cancel() }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 84.dp)) }
     }
 }

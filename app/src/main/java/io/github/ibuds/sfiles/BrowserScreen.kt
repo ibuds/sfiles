@@ -95,6 +95,11 @@ fun BrowserScreen(
         refresh()
     }
 
+    fun op(title: String, done: String, files: List<File>, block: ((Long) -> Unit) -> String?) {
+        val started = Ops.run(ctx, OpJob(title, done, files, block) { msg -> if (msg != null) toast(msg); tick++ })
+        if (started) clear() else toast("Another operation is still running")
+    }
+
     BackHandler(selectMode) { clear() }
     LaunchedEffect(dir, category) { clear() }
 
@@ -102,36 +107,15 @@ fun BrowserScreen(
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             // Top bar
             if (selectMode) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        Modifier.clip(CircleShape).background(Pill).clickable {
-                            selected = if (selected.size == list.size) emptySet() else list.map { it.path }.toSet()
-                        }.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Check(selected.isNotEmpty() && selected.size == list.size)
-                        Spacer(Modifier.width(12.dp))
-                        Text("${selected.size}", fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "Cancel", fontSize = 18.sp,
-                        modifier = Modifier.clip(CircleShape).background(Pill).clickable { clear() }.padding(horizontal = 24.dp, vertical = 12.dp),
-                    )
-                }
+                SelectionTopBar(selected.size, selected.isNotEmpty() && selected.size == list.size, {
+                    selected = if (selected.size == list.size) emptySet() else list.map { it.path }.toSet()
+                }) { clear() }
             } else {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
-                    if (category != null) Text(category.label, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.weight(1f))
-                    var topMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton({ topMenu = true }) { Icon(Icons.Filled.MoreVert, null) }
-                        DropdownMenu(topMenu, { topMenu = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
-                            DropdownMenuItem({ Text("Edit", fontSize = 17.sp) }, { topMenu = false; selectMode = true })
-                            if (dir != null) DropdownMenuItem({ Text("Create folder", fontSize = 17.sp) }, { topMenu = false; dlg = Dlg.NewFolder })
-                            DropdownMenuItem({ Text("Settings", fontSize = 17.sp) }, { topMenu = false; onSettings() })
-                        }
+                ScreenHeader(category?.label, onBack) {
+                    OverflowMenu { close ->
+                        MenuItem("Edit") { close(); selectMode = true }
+                        if (dir != null) MenuItem("Create folder") { close(); dlg = Dlg.NewFolder }
+                        MenuItem("Settings") { close(); onSettings() }
                     }
                 }
             }
@@ -141,7 +125,14 @@ fun BrowserScreen(
 
 
             if (entries == null) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            else if (list.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No files", color = Muted) }
+            else if (list.isEmpty()) EmptyState(
+                when (category) {
+                    Category.Recent -> "No recent files"
+                    Category.Favorites -> "No favorites"
+                    else -> "No files"
+                },
+                if (category == Category.Favorites) "Select files or folders, then tap More > Add to favorites." else null,
+            )
             else LazyColumn(
                 Modifier.fillMaxSize().dragSelect(listState, paths, selected, { selected = it }, { selectMode = true }),
                 state = listState, contentPadding = PaddingValues(bottom = 110.dp),
@@ -154,7 +145,7 @@ fun BrowserScreen(
                             else if (e.isDir) onFolder(e.file) else openFile(ctx, e.file)
                         },
                         onLongClick = { selectMode = true; selected = selected + e.path },
-                        subtitle = if (category != null) e.file.parentFile?.let { Fs.displayPath(it).removePrefix("/Internal storage") .ifEmpty { "/" } } else null, modifier = Modifier.animateItem())
+                        subtitle = if (category != null) e.file.parentFile?.let(::shortPath) else null, modifier = Modifier.animateItem())
                 }
             }
         }
@@ -169,29 +160,44 @@ fun BrowserScreen(
             enter = slideInVertically(tween(260)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
         ) {
-            var more by remember { mutableStateOf(false) }
-            Row(
-                Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)
-                    .fillMaxWidth().clip(CircleShape).background(Bar).padding(vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
+            ActionBar {
                 val has = sel.isNotEmpty()
-                BarItem(Icons.Outlined.DriveFileMove, "Move", has) { dlg = Dlg.Pick(true) }
-                BarItem(Icons.Outlined.ContentCopy, "Copy", has) { dlg = Dlg.Pick(false) }
-                BarItem(Icons.Outlined.Share, "Share", has) { share(ctx, sel.map { it.file }) }
-                BarItem(Icons.Outlined.Delete, "Delete", has) { dlg = Dlg.Delete }
-                Box {
-                    BarItem(Icons.Filled.MoreVert, "More", has) { more = true }
-                    DropdownMenu(more, { more = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
+                BarAction(Icons.Outlined.DriveFileMove, "Move", has) { dlg = Dlg.Pick(true) }
+                BarAction(Icons.Outlined.ContentCopy, "Copy", has) { dlg = Dlg.Pick(false) }
+                BarAction(Icons.Outlined.Share, "Share", has) { share(ctx, sel.map { it.file }) }
+                BarAction(Icons.Outlined.Delete, "Delete", has) { dlg = Dlg.Delete }
+                var more by remember { mutableStateOf(false) }
+                Row(Modifier.weight(1f)) {
+                    BarAction(Icons.Filled.MoreVert, "More", has) { more = true }
+                    AppMenu(more, { more = false }) {
                         if (sel.size == 1) {
-                            DropdownMenuItem({ Text("Details", fontSize = 17.sp) }, { more = false; dlg = Dlg.Details(sel[0]) })
-                            DropdownMenuItem({ Text("Rename", fontSize = 17.sp) }, { more = false; dlg = Dlg.Rename(sel[0]) })
+                            MenuItem("Details") { more = false; dlg = Dlg.Details(sel[0]) }
+                            MenuItem("Rename") { more = false; dlg = Dlg.Rename(sel[0]) }
                         }
-                        DropdownMenuItem({ Text("Compress", fontSize = 17.sp) }, {
+                        MenuItem("Compress") {
                             more = false
                             val files = sel.map { it.file }
-                            work { val z = Fs.zip(files, files.first().parentFile!!); "Created ${z.name}" }
-                        })
+                            op("Compressing ${itemsText(files.size)}", "Compressed ${itemsText(files.size)}", files) { cb ->
+                                Fs.zip(files, files.first().parentFile!!, cb); null
+                            }
+                        }
+                        val allFav = sel.isNotEmpty() && sel.all { it.path in Fs.favorites }
+                        MenuItem(if (allFav) "Remove from favorites" else "Add to favorites") {
+                            more = false; Fs.setFavorite(sel.map { it.path }, !allFav); refresh()
+                        }
+                        val allHidden = sel.isNotEmpty() && sel.all { it.name.startsWith(".") }
+                        MenuItem(if (allHidden) "Unhide" else "Hide") {
+                            more = false
+                            val items = sel.map { it.file }
+                            work {
+                                val ok = items.all {
+                                    val n = if (allHidden) it.name.trimStart('.').ifEmpty { it.name } else if (it.name.startsWith(".")) it.name else "." + it.name
+                                    n == it.name || Fs.rename(it, n)
+                                }
+                                if (!ok) "Couldn't ${if (allHidden) "unhide" else "hide"} some items"
+                                else if (!allHidden && !Fs.showHidden) "Hidden. Turn on Show hidden files in Settings to see them." else null
+                            }
+                        }
                     }
                 }
             }
@@ -231,13 +237,17 @@ fun BrowserScreen(
             text = {
                 Text(
                     if (sel.any { Fs.isRemovable(it.file) }) "Items on a USB drive can't be recovered. SFiles doesn't create a trash folder on removable drives."
-                    else "${sel.size} selected item(s) will be moved to the trash.",
+                    else "${itemsText(sel.size)} will be moved to the trash.",
                 )
             },
             confirmButton = {
                 TextButton({
                     dlg = null; val files = sel.map { it.file }
-                    work { if (files.all { Fs.trash(it) }) null else "Some items couldn't be deleted" }
+                    val perm = files.any { Fs.isRemovable(it) }
+                    op(
+                        "${if (perm) "Deleting" else "Moving to Trash:"} ${itemsText(files.size)}",
+                        "${if (perm) "Deleted" else "Moved to Trash:"} ${itemsText(files.size)}", files,
+                    ) { cb -> if (files.all { cb(0); Fs.trash(it, cb) }) null else "Some items couldn't be deleted" }
                 }) { Text(if (sel.any { Fs.isRemovable(it.file) }) "Delete" else "Move to Trash") }
             },
             dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
@@ -247,8 +257,9 @@ fun BrowserScreen(
             onDismiss = { dlg = null },
             onPicked = { target ->
                 dlg = null; val files = sel.map { it.file }
-                work {
-                    val ok = files.all { if (d.move) Fs.move(it, target) else Fs.copy(it, target) }
+                val verb = if (d.move) "Moving" else "Copying"
+                op("$verb ${itemsText(files.size)}", "${if (d.move) "Moved" else "Copied"} ${itemsText(files.size)}", files) { cb ->
+                    val ok = files.all { if (d.move) Fs.move(it, target, cb) else Fs.copy(it, target, cb) }
                     if (ok) null else "Some items couldn't be ${if (d.move) "moved" else "copied"}"
                 }
             },
@@ -267,8 +278,8 @@ private fun SortRow(filter: Kind, onFilter: (Kind) -> Unit, sort: SortBy, onSort
                 Text(filter.label, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                 Icon(Icons.Filled.ArrowDropDown, null)
             }
-            DropdownMenu(fm, { fm = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
-                Kind.values().filter { it != Kind.Other }.forEach { k -> DropdownMenuItem({ Text(k.label) }, { fm = false; onFilter(k) }) }
+            AppMenu(fm, { fm = false }) {
+                Kind.values().filter { it != Kind.Other }.forEach { k -> MenuItem(k.label) { fm = false; onFilter(k) } }
             }
         }
         Spacer(Modifier.weight(1f))
@@ -278,26 +289,14 @@ private fun SortRow(filter: Kind, onFilter: (Kind) -> Unit, sort: SortBy, onSort
                 Spacer(Modifier.width(8.dp))
                 Text(sort.label, fontSize = 15.sp)
             }
-            DropdownMenu(sm, { sm = false }, shape = RoundedCornerShape(24.dp), containerColor = MenuBg) {
-                SortBy.values().forEach { s -> DropdownMenuItem({ Text(s.label) }, { sm = false; onSort(s) }) }
+            AppMenu(sm, { sm = false }) {
+                SortBy.values().forEach { s -> MenuItem(s.label) { sm = false; onSort(s) } }
             }
         }
         Spacer(Modifier.width(10.dp))
         Box(Modifier.width(1.dp).height(18.dp).background(Divider))
         Spacer(Modifier.width(10.dp))
         Icon(if (asc) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward, null, modifier = Modifier.size(22.dp).clickable { onAsc() })
-    }
-}
-
-@Composable
-private fun BarItem(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier.clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 10.dp, vertical = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        val c = if (enabled) MaterialTheme.colorScheme.onSurface else Color(0xFF666666)
-        Icon(icon, null, tint = c, modifier = Modifier.size(24.dp))
-        Text(label, fontSize = 12.sp, color = c)
     }
 }
 
@@ -311,8 +310,8 @@ private fun DetailsDialog(e: Entry, onDismiss: () -> Unit) {
         }
     }
     AlertDialog(
-        onDismissRequest = onDismiss, containerColor = Sheet, shape = RoundedCornerShape(32.dp),
-        title = { Text("Details", fontWeight = FontWeight.Bold, fontSize = 20.sp) },
+        onDismissRequest = onDismiss, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
+        title = { Text("Details", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -326,7 +325,7 @@ private fun DetailsDialog(e: Entry, onDismiss: () -> Unit) {
                 Field("Path", Fs.displayPath(e.file))
             }
         },
-        confirmButton = { TextButton(onDismiss, Modifier.fillMaxWidth()) { Text("OK", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface) } },
+        confirmButton = { TextButton(onDismiss) { Text("OK") } },
     )
 }
 
