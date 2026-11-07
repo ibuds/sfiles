@@ -2,6 +2,7 @@ package io.github.ibuds.sfiles
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +43,7 @@ private val cats = listOf(
     Cat(Category.Apk, null, Color(0xFF34431A), Color(0xFFA4D93A)),
 )
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavorites: () -> Unit, onTrash: () -> Unit, onNetwork: () -> Unit, onSettings: () -> Unit, onCategory: (Category) -> Unit, onFolder: (File) -> Unit, onOpenFile: (File) -> Unit, onSearch: () -> Unit) {
     val ctx = LocalContext.current
@@ -49,6 +51,8 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
     val recent = recentOrNull ?: emptyList()
     val favs by produceState<List<Entry>>(emptyList(), Fs.favorites, Fs.showHidden) { value = withContext(Dispatchers.IO) { Fs.favoriteEntries() } }
     val vols = remember(volTick) { Fs.vols }
+    var driveMenu by remember { mutableStateOf<String?>(null) }
+    var driveDialog by remember { mutableStateOf<Boolean?>(null) } // true = unmount, false = format
     val connCount by produceState(0, volTick) { value = withContext(Dispatchers.IO) { ConnStore.all(ctx).size } }
 
     Box(Modifier.fillMaxSize()) {
@@ -91,7 +95,13 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
                 Column {
                     vols.forEach { v ->
                         val (used, total) = remember(v) { Fs.storage(v.dir) }
-                        Row(Modifier.fillMaxWidth().clickable { onFolder(v.dir) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box {
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .combinedClickable(onClick = { onFolder(v.dir) }, onLongClick = { if (v.removable) driveMenu = v.dir.absolutePath })
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Icon(if (v.removable) Icons.Outlined.Usb else Icons.Outlined.PhoneAndroid, null, modifier = Modifier.size(26.dp))
                             Spacer(Modifier.width(16.dp))
                             Column(Modifier.weight(1f)) {
@@ -107,6 +117,11 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
                                 )
                             }
                         }
+                        AppMenu(driveMenu == v.dir.absolutePath, { driveMenu = null }) {
+                            MenuItem("Unmount") { driveMenu = null; driveDialog = true }
+                            MenuItem("Format drive") { driveMenu = null; driveDialog = false }
+                        }
+                        }
                     }
                     StorageRow(Icons.Outlined.Dns, "Network storage", connCount.let { if (it == 0) null else "$it connection${if (it == 1) "" else "s"}" }, onNetwork)
                 }
@@ -120,6 +135,7 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
             Spacer(Modifier.height(100.dp))
             }
         }
+        driveDialog?.let { DriveSettingsDialog(it) { driveDialog = null } }
         SearchPill(onSearch, onVoice, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp))
     }
 }

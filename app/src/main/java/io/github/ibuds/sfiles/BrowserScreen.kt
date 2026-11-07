@@ -56,6 +56,8 @@ private sealed interface Dlg {
     data class Details(val e: Entry) : Dlg
     data class Rename(val e: Entry) : Dlg
     object Delete : Dlg
+    object Format : Dlg
+    object Unmount : Dlg
     object NewFolder : Dlg
     data class Pick(val move: Boolean) : Dlg
 }
@@ -115,6 +117,10 @@ fun BrowserScreen(
                     OverflowMenu { close ->
                         MenuItem("Edit") { close(); selectMode = true }
                         if (dir != null) MenuItem("Create folder") { close(); dlg = Dlg.NewFolder }
+                        if (dir != null && Fs.isRemovable(dir)) {
+                            MenuItem("Unmount") { close(); dlg = Dlg.Unmount }
+                            MenuItem("Format drive") { close(); dlg = Dlg.Format }
+                        }
                         MenuItem("Settings") { close(); onSettings() }
                     }
                 }
@@ -214,7 +220,10 @@ fun BrowserScreen(
                 text = {
                     OutlinedTextField(
                         name, { name = it }, singleLine = true,
-                        supportingText = { if (name.startsWith(".")) Text("Names starting with a dot are hidden.") },
+                        supportingText = {
+                            if (name.startsWith(".")) Text("Names starting with a dot are hidden.")
+                            else if (!d.e.isDir && File(name).extension != d.e.file.extension) Text("Changing the extension changes how this file opens.")
+                        },
                     )
                 },
                 confirmButton = { TextButton({ dlg = null; work { if (Fs.rename(d.e.file, name)) null else "Couldn't rename" } }) { Text("Rename") } },
@@ -252,6 +261,8 @@ fun BrowserScreen(
             },
             dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
         )
+        Dlg.Format -> DriveSettingsDialog(false) { dlg = null }
+        Dlg.Unmount -> DriveSettingsDialog(true) { dlg = null }
         is Dlg.Pick -> FolderPicker(
             start = dir ?: Fs.root, actionLabel = if (d.move) "Move here" else "Copy here",
             onDismiss = { dlg = null },

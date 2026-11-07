@@ -25,7 +25,9 @@ Captured on Android 8.0 (the minimum supported version) and Android 17.
 - Multi-select: long-press, then drag across rows to select a range
 - Move, copy, share, delete, rename, compress (zip) and file details
 - Progress for copy, move, compress, delete and restore, in the app and in a notification, with a Cancel button
+- Several operations at once, each with its own card and notification, remaining time and item count
 - Favorites on Home, and Hide / Unhide for any file or folder
+- Unmount and Format shortcuts for USB drives and SD cards (long-press the drive on Home, or use the menu inside it); Android only allows these from system Settings, so SFiles opens the right screen
 - Trash with 30-day retention (internal storage); permanent delete on removable drives
 - USB drives and SD cards shown with their filesystem (FAT32, exFAT, NTFS)
 - Network storage: FTP, SFTP and SMB (v2/v3) with browse, open, download, upload, rename, delete
@@ -76,7 +78,7 @@ SFiles requests "All files access" (`MANAGE_EXTERNAL_STORAGE`) because browsing 
 | `Fs.kt` | Local file operations, volumes, trash, formatting |
 | `Remote.kt`, `RemoteScreens.kt` | FTP / SFTP / SMB layer and screens |
 | `Common.kt`, `Ui.kt`, `Theme.kt` | Shared header, menu, action bar, progress card and palette |
-| `OpService.kt` | Foreground service behind copy / move progress and notifications |
+| `OpService.kt` | Foreground service and task list behind progress cards and notifications |
 | `Extra.kt`, `Picker.kt`, `SearchScreen.kt` | Trash, settings, folder picker, search |
 
 ## License

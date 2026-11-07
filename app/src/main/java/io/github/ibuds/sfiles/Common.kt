@@ -10,8 +10,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.ChevronRight
+import android.content.Context
+import android.content.Intent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.Icon
@@ -147,28 +150,58 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) =
 /** Folder path for list subtitles, without the redundant "/Internal storage" prefix. */
 fun shortPath(dir: java.io.File): String = Fs.displayPath(dir).removePrefix("/Internal storage").ifEmpty { "/" }
 
-/** Floating progress card for a running copy, move or compress. */
+/** Floating card for one running operation: title and percentage, a progress bar, details, then Hide and Cancel below the bar. */
 @Composable
-fun OpProgressCard(p: OpProgress, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+fun OpProgressCard(t: OpTask, onCancel: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier.fillMaxWidth().shadow(ShadowElev, RoundedCornerShape(24.dp)).background(Bar).padding(horizontal = 20.dp, vertical = 14.dp),
+        modifier.fillMaxWidth().shadow(ShadowElev, RoundedCornerShape(24.dp)).background(Bar).padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(p.title, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1)
-            if (p.total > 0) Text("${(p.done * 100 / p.total).coerceIn(0, 100)}%", fontSize = 14.sp, color = Muted)
-            Text(
-                "Cancel", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Accent,
-                modifier = Modifier.padding(start = 16.dp).clip(CircleShape).clickable(onClick = onCancel).padding(horizontal = 8.dp, vertical = 4.dp),
-            )
+        Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(t.title, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1)
+            if (t.total > 0) Text("${t.percent}%", fontSize = 14.sp, color = Muted)
         }
         Spacer(Modifier.height(10.dp))
-        if (p.total > 0) LinearProgressIndicator(
-            progress = { (p.done.toFloat() / p.total).coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape), color = Accent, trackColor = Chip, drawStopIndicator = {},
-        ) else LinearProgressIndicator(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape), color = Accent, trackColor = Chip)
-        if (p.total > 0) {
+        val barMod = Modifier.padding(end = 8.dp).fillMaxWidth().height(6.dp).clip(CircleShape)
+        if (t.total > 0) androidx.compose.material3.LinearProgressIndicator(
+            progress = { t.percent / 100f }, modifier = barMod, color = Accent, trackColor = Chip, drawStopIndicator = {},
+        ) else androidx.compose.material3.LinearProgressIndicator(barMod, color = Accent, trackColor = Chip)
+        val d = t.detail()
+        val eta = t.etaMs()?.let(::formatEta)
+        if (d.isNotEmpty() || eta != null) {
             Spacer(Modifier.height(6.dp))
-            Text("${formatSize(p.done)} of ${formatSize(p.total)}", fontSize = 12.sp, color = Muted)
+            Text(listOfNotNull(d.ifEmpty { null }, eta).joinToString(" · "), fontSize = 12.sp, color = Muted, maxLines = 1)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            listOf("Hide" to { t.hidden = true }, "Cancel" to onCancel).forEach { (label, action) ->
+                Text(
+                    label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Accent,
+                    modifier = Modifier.clip(CircleShape).clickable(onClick = action).padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
         }
     }
+}
+
+/** Opens the system storage settings, where Android lets the user eject or format a drive. */
+fun openDriveSettings(ctx: Context) {
+    val tries = listOf("android.settings.MEMORY_CARD_SETTINGS", android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS, android.provider.Settings.ACTION_SETTINGS)
+    for (a in tries) { try { ctx.startActivity(Intent(a).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) {} }
+}
+
+/** Unmounting and formatting are reserved for the system, so SFiles hands over to Settings. */
+@Composable
+fun DriveSettingsDialog(unmount: Boolean, onDismiss: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
+        title = { Text(if (unmount) "Unmount drive" else "Format drive", fontWeight = FontWeight.Bold) },
+        text = {
+            Text(
+                if (unmount) "Android only lets the system Settings app eject drives, so SFiles can't do it directly. Open storage settings and tap the eject button next to the drive."
+                else "Android only lets the system Settings app format drives, so SFiles can't do it directly. Formatting erases everything on the drive.",
+            )
+        },
+        confirmButton = { TextButton({ onDismiss(); openDriveSettings(ctx) }) { Text("Open settings") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
 }

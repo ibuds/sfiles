@@ -177,6 +177,9 @@ private fun App(volTick: Int) {
     }
         }
     }
-    Ops.progress?.let { OpProgressCard(it, { Ops.cancel() }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 84.dp)) }
+    if (Ops.tasks.any { !it.hidden }) Column(
+        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 84.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) { Ops.tasks.filter { !it.hidden }.forEach { t -> OpProgressCard(t, { Ops.cancel(t) }) } }
     }
 }
