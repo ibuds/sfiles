@@ -1,10 +1,35 @@
+<div align="center">
+
 # SFiles
 
-A fast, clean file manager for Android, built with Kotlin and Jetpack Compose.
+**A fast, clean file manager for Android.**
+Kotlin · Jetpack Compose · zero ads · zero uploads
+
+[![Release](https://img.shields.io/github/v/release/ibuds/sfiles?style=for-the-badge&color=3DDC84&logo=android&logoColor=white)](https://github.com/ibuds/sfiles/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ibuds/sfiles/total?style=for-the-badge&color=0A84FF)](https://github.com/ibuds/sfiles/releases)
+[![Android 8+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#build)
+[![Kotlin](https://img.shields.io/badge/Kotlin-Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://developer.android.com/jetpack/compose)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+
+[**Download**](https://github.com/ibuds/sfiles/releases/latest) ·
+[**Features**](#features) ·
+[**Build**](#build) ·
+[**Architecture**](#architecture) ·
+[**Support**](#support)
+
+</div>
+
+---
 
 ## Download
 
-Get the latest signed APK from the [Releases page](https://github.com/ibuds/sfiles/releases/latest), then open it on your phone. Android will ask you to allow installs from your browser or file app the first time.
+Grab the latest signed APK from the [Releases page](https://github.com/ibuds/sfiles/releases/latest) and open it on your phone. Android will ask you to allow installs from your browser or file app the first time.
+
+Each release ships a `.sha256` file so you can verify the download:
+
+```bash
+shasum -a 256 -c SFiles-1.0.2.apk.sha256
+```
 
 ## Screenshots
 
@@ -20,26 +45,34 @@ Captured on Android 8.0 (the minimum supported version) and Android 17.
 
 ## Features
 
+### Browse
+
 - Home screen with category shortcuts (Downloads, Docs, Images, Audio, Videos, Install files), recent files and storage usage
 - Folder browser with breadcrumb, filter, sorting and list view
-- Multi-select: long-press, then drag across rows to select a range
-- Move, copy, share, delete, rename, compress (zip) and file details
-- Progress for copy, move, compress, delete and restore, in the app and in a notification, with a Cancel button
-- Several operations at once, each with its own card and notification, remaining time and item count
-- Favorites on Home, and Hide / Unhide for any file or folder
-- Unmount and Format shortcuts for USB drives and SD cards (long-press the drive on Home, or use the menu inside it); Android only allows these from system Settings, so SFiles opens the right screen
-- Trash with 30-day retention (internal storage); permanent delete on removable drives
-- USB drives and SD cards shown with their filesystem (FAT32, exFAT, NTFS)
-- Network storage: FTP, SFTP and SMB (v2/v3) with browse, open, download, upload, rename, delete
-- Hidden files toggle (Hide renames an item to start with `.`) and a Hide file extensions toggle
 - Search across storage, with voice input
+- Favorites on Home, plus Hide / Unhide for any file or folder
+- Hidden files toggle (Hide renames an item to start with `.`) and a Hide file extensions toggle
 - Light, dark and follow-device themes
 
-SFiles never creates folders on removable drives on its own.
+### Operate
+
+- Multi-select: long-press, then drag across rows to select a range
+- Move, copy, share, delete, rename, compress (zip) and file details
+- Several operations at once, each with its own card and notification, remaining time and item count
+- Progress for copy, move, compress, delete and restore, in the app and in a notification, with a Cancel button
+- Trash with 30-day retention (internal storage); permanent delete on removable drives
+
+### Storage
+
+- USB drives and SD cards shown with their filesystem (FAT32, exFAT, NTFS)
+- Unmount and Format shortcuts for removable drives (long-press the drive on Home, or use the menu inside it). Android only allows these from system Settings, so SFiles opens the right screen
+- Network storage over **FTP**, **SFTP** and **SMB (v2/v3)**: browse, open, download, upload, rename, delete
+
+> SFiles never creates folders on removable drives on its own.
 
 ## Build
 
-Requirements: JDK 17 and the Android SDK (platform 35, build-tools 35).
+**Requirements:** JDK 17 and the Android SDK (platform 35, build-tools 35).
 
 ```bash
 # point Gradle at your SDK
@@ -64,23 +97,41 @@ keyPassword=...
 
 Without that file, `assembleRelease` produces an unsigned APK.
 
-## Permissions
+## Architecture
 
-SFiles requests "All files access" (`MANAGE_EXTERNAL_STORAGE`) because browsing and managing every folder is the core purpose of a file manager. Nothing is uploaded anywhere; network storage connects only to servers you add yourself. Saved passwords are stored encrypted on the device.
+Sources live in `app/src/main/java/io/github/ibuds/sfiles/`.
 
-## Project layout
+```
+sfiles/
+├── MainActivity.kt        navigation, permission gate, voice search
+├── HomeScreen.kt          home screen
+├── BrowserScreen.kt       folder and category browser, selection mode, dialogs
+├── SearchScreen.kt        storage-wide search
+├── Fs.kt                  local file operations, volumes, trash, formatting
+├── Remote.kt              FTP / SFTP / SMB layer
+├── RemoteScreens.kt       network storage screens
+├── OpService.kt           foreground service + task list behind progress cards
+├── Common.kt · Ui.kt      shared header, menu, action bar, progress card
+├── Theme.kt               palette and typography
+└── Extra.kt · Picker.kt   trash, settings, folder picker
+```
 
-| File | Purpose |
+## Privacy & permissions
+
+| | |
 | --- | --- |
-| `MainActivity.kt` | Navigation, permission gate, voice search |
-| `HomeScreen.kt` | Home screen |
-| `BrowserScreen.kt` | Folder and category browser, selection mode, dialogs |
-| `Fs.kt` | Local file operations, volumes, trash, formatting |
-| `Remote.kt`, `RemoteScreens.kt` | FTP / SFTP / SMB layer and screens |
-| `Common.kt`, `Ui.kt`, `Theme.kt` | Shared header, menu, action bar, progress card and palette |
-| `OpService.kt` | Foreground service and task list behind progress cards and notifications |
-| `Extra.kt`, `Picker.kt`, `SearchScreen.kt` | Trash, settings, folder picker, search |
+| **Permission** | "All files access" (`MANAGE_EXTERNAL_STORAGE`), because browsing and managing every folder is the core purpose of a file manager |
+| **Network** | Nothing is uploaded anywhere. Network storage connects only to servers you add yourself |
+| **Credentials** | Saved passwords are stored encrypted on the device |
+
+## Support
+
+SFiles is free and open source. If it saves you some time, you can say thanks:
+
+<a href="https://trakteer.id/ibudsss"><img src="https://img.shields.io/badge/Buy%20me%20a%20cendol-Trakteer-C8102E?style=for-the-badge&logo=buymeacoffee&logoColor=white" alt="Buy me a cendol on Trakteer"></a>
+
+Starring the repo and reporting bugs help just as much.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+[MIT](LICENSE). The optional "Standard Android font" is Roboto, also Apache 2.0.
