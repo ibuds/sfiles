@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -101,14 +103,14 @@ fun TrashScreen(onBack: () -> Unit) {
             }
         }
     }
-    if (emptyAll) AlertDialog(
+    if (emptyAll) AppDialog(
         onDismissRequest = { emptyAll = false }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
         title = { Text("Empty trash?", fontWeight = FontWeight.Bold) },
         text = { Text("Everything in the trash will be deleted permanently.") },
         confirmButton = { TextButton({ emptyAll = false; val all = Fs.trashItems(); op("Emptying trash", "Trash emptied", all.map { it.entry.file }) { cb -> forever(all, cb) } }) { Text("Empty") } },
         dismissButton = { TextButton({ emptyAll = false }) { Text("Cancel") } },
     )
-    if (confirm) AlertDialog(
+    if (confirm) AppDialog(
         onDismissRequest = { confirm = false }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
         title = { Text("Delete forever?", fontWeight = FontWeight.Bold) },
         text = { Text("${itemsText(sel.size)} will be deleted permanently.") },
@@ -121,56 +123,112 @@ fun TrashScreen(onBack: () -> Unit) {
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     var themeDialog by remember { mutableStateOf(false) }
+    var fontDialog by remember { mutableStateOf(false) }
+    var styleDialog by remember { mutableStateOf(false) }
+    val styles = listOf("Classic", "Minimalist")
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "1.0" }
     val modes = listOf("Follow device settings", "Light", "Dark")
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    val fonts = listOf("Follow device settings", "Standard Android font")
+    Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())) {
         ScreenHeader("Settings", onBack)
         SectionTitle("Appearance", Modifier.padding(start = 24.dp, top = 16.dp, bottom = 8.dp))
-        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card)) {
-            Column(Modifier.fillMaxWidth().clickable { themeDialog = true }.padding(horizontal = 24.dp, vertical = 18.dp)) {
-                Text("Theme", fontSize = 18.sp)
-                Text(modes[Fs.themeMode], fontSize = 13.sp, color = Accent)
-            }
+        SettingsCard {
+            ChoiceRow("Theme", modes[Fs.themeMode]) { themeDialog = true }
+            SettingsDivider()
+            ChoiceRow("Font", fonts[Fs.fontMode]) { fontDialog = true }
+            SettingsDivider()
+            ChoiceRow("Style", styles[Fs.style]) { styleDialog = true }
         }
         SectionTitle("File management", Modifier.padding(start = 24.dp, top = 24.dp, bottom = 8.dp))
-        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card)) {
-            ToggleRow("Show hidden files", Fs.showHidden) { Fs.updateShowHidden(it) }
-            HorizontalDivider(Modifier.padding(horizontal = 24.dp), thickness = 0.7.dp, color = Divider)
-            ToggleRow("Hide file extensions", Fs.hideExt) { Fs.updateHideExt(it) }
+        SettingsCard {
+            ToggleRow("Filter small files", Fs.filterSmall, "Hide files smaller than 30 KB in categories (Images, Docs, ...) and Recent files.") { Fs.updateFilterSmall(it) }
+            SettingsDivider()
+            ToggleRow("Show hidden files", Fs.showHidden, "To hide an item, select it, then tap More > Hide.") { Fs.updateShowHidden(it) }
+            SettingsDivider()
+            ToggleRow("Hide file extensions", Fs.hideExt, "Names show without extensions, and renaming keeps the extension so it can't be changed by accident.") { Fs.updateHideExt(it) }
+            SettingsDivider()
+            ToggleRow("Recently deleted", Fs.useTrash, "Keep deleted files in Trash for 30 days. When off, deleting is permanent.") { Fs.updateUseTrash(it) }
+        }
+        SectionTitle("Search settings", Modifier.padding(start = 24.dp, top = 24.dp, bottom = 8.dp))
+        SettingsCard {
+            ToggleRow("Show search history", Fs.historyOn) { Fs.updateHistoryOn(it); if (!it) Fs.removeHistory(null) }
+            SettingsDivider()
+            ToggleRow("Display recent files in search", Fs.recentInSearch) { Fs.updateRecentInSearch(it) }
+        }
+        SectionTitle("Notifications", Modifier.padding(start = 24.dp, top = 24.dp, bottom = 8.dp))
+        val blocked = !androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+        SettingsCard {
+            ToggleRow(
+                "File operation notifications", Fs.notifications && !blocked,
+                if (blocked) "Blocked in system settings. Turn this on to open them." else "Show progress and results of copy, move, compress and delete in the notification shade.",
+            ) { on ->
+                if (on && androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled().not()) {
+                    Fs.updateNotifications(true)
+                    try {
+                        ctx.startActivity(
+                            android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    } catch (_: Exception) {}
+                } else Fs.updateNotifications(on)
+            }
         }
         SectionTitle("About", Modifier.padding(start = 24.dp, top = 24.dp, bottom = 8.dp))
-        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card).padding(horizontal = 24.dp, vertical = 18.dp)) {
-            Text("Version", fontSize = 18.sp)
-            Text(version, fontSize = 13.sp, color = Muted)
-        }
+        SettingsCard { ChoiceRow("Version", version, accent = false) {} }
+        Spacer(Modifier.height(32.dp))
     }
-    if (themeDialog) AlertDialog(
-        onDismissRequest = { themeDialog = false }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
-        title = { Text("Theme", fontWeight = FontWeight.Bold) },
+    if (themeDialog) PickDialog("Theme", modes, Fs.themeMode, { Fs.updateThemeMode(it) }) { themeDialog = false }
+    if (styleDialog) PickDialog("Style", styles, Fs.style, { Fs.updateStyle(it) }) { styleDialog = false }
+    if (fontDialog) PickDialog("Font", fonts, Fs.fontMode, { Fs.updateFontMode(it) }) { fontDialog = false }
+}
+
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) =
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Card), content = content)
+
+@Composable
+private fun SettingsDivider() = HorizontalDivider(Modifier.padding(horizontal = 24.dp), thickness = 0.7.dp, color = Divider)
+
+@Composable
+private fun ChoiceRow(label: String, value: String, accent: Boolean = true, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 18.dp)) {
+        Text(label, fontSize = 17.sp)
+        Text(value, fontSize = 14.sp, color = if (accent) Accent else Muted)
+    }
+}
+
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, sub: String? = null, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 24.dp, vertical = if (sub == null) 14.dp else 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(label, fontSize = 17.sp)
+            if (sub != null) Text(sub, fontSize = 14.sp, color = Muted)
+        }
+        Switch(checked, onChange)
+    }
+}
+
+@Composable
+private fun PickDialog(title: String, options: List<String>, current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    AppDialog(
+        onDismissRequest = onDismiss, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
+        title = { Text(title, fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                modes.forEachIndexed { i, label ->
+                options.forEachIndexed { i, label ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { Fs.updateThemeMode(i); themeDialog = false }.padding(vertical = 10.dp),
+                        Modifier.fillMaxWidth().clickable { onPick(i); onDismiss() }.padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(Fs.themeMode == i, { Fs.updateThemeMode(i); themeDialog = false })
+                        RadioButton(current == i, { onPick(i); onDismiss() })
                         Spacer(Modifier.width(8.dp)); Text(label, fontSize = 17.sp)
                     }
                 }
             }
         },
-        confirmButton = { TextButton({ themeDialog = false }) { Text("Cancel") } },
+        confirmButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 24.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, fontSize = 18.sp, modifier = Modifier.weight(1f))
-        Switch(checked, onChange)
-    }
 }

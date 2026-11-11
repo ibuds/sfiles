@@ -41,15 +41,62 @@ object Fs {
     var showHidden by androidx.compose.runtime.mutableStateOf(false)
     /** 0 = follow device, 1 = light, 2 = dark */
     var themeMode by androidx.compose.runtime.mutableIntStateOf(0)
+    /** 0 = classic SFiles look, 1 = minimalist */
+    var style by androidx.compose.runtime.mutableIntStateOf(0)
+    fun updateStyle(v: Int) { style = v; prefs?.edit()?.putInt("style", v)?.apply() }
+    val minimal: Boolean get() = style == 1
+    /** Folder contents as a 4-column grid instead of a list. */
+    var grid by androidx.compose.runtime.mutableStateOf(false)
+    fun updateGrid(v: Boolean) { grid = v; prefs?.edit()?.putBoolean("grid", v)?.apply() }
     fun updateThemeMode(v: Int) { themeMode = v; prefs?.edit()?.putInt("themeMode", v)?.apply() }
     fun init(ctx: Context) {
         prefs = ctx.getSharedPreferences("sfiles", Context.MODE_PRIVATE)
         themeMode = prefs!!.getInt("themeMode", 0)
+        style = prefs!!.getInt("style", 0)
+        grid = prefs!!.getBoolean("grid", false)
         showHidden = prefs!!.getBoolean("showHidden", false)
         hideExt = prefs!!.getBoolean("hideExt", false)
+        filterSmall = prefs!!.getBoolean("filterSmall", false)
+        useTrash = prefs!!.getBoolean("useTrash", true)
+        notifications = prefs!!.getBoolean("notifications", true)
+        historyOn = prefs!!.getBoolean("historyOn", true)
+        recentInSearch = prefs!!.getBoolean("recentInSearch", true)
+        fontMode = prefs!!.getInt("fontMode", 0)
+        history = prefs!!.getString("history", "")!!.split("\n").filter { it.isNotEmpty() }
         favorites = prefs!!.getString("favorites", "")!!.split("\n").filter { it.isNotEmpty() }
     }
     fun updateShowHidden(v: Boolean) { showHidden = v; prefs?.edit()?.putBoolean("showHidden", v)?.apply() }
+
+    var filterSmall by androidx.compose.runtime.mutableStateOf(false)
+    fun updateFilterSmall(v: Boolean) { filterSmall = v; prefs?.edit()?.putBoolean("filterSmall", v)?.apply() }
+    /** When off, deleting removes files immediately instead of moving them to Trash. */
+    var useTrash by androidx.compose.runtime.mutableStateOf(true)
+    fun updateUseTrash(v: Boolean) { useTrash = v; prefs?.edit()?.putBoolean("useTrash", v)?.apply() }
+    /** Progress and result notifications for file operations. */
+    var notifications by androidx.compose.runtime.mutableStateOf(true)
+    fun updateNotifications(v: Boolean) { notifications = v; prefs?.edit()?.putBoolean("notifications", v)?.apply() }
+    var historyOn by androidx.compose.runtime.mutableStateOf(true)
+    fun updateHistoryOn(v: Boolean) { historyOn = v; prefs?.edit()?.putBoolean("historyOn", v)?.apply() }
+    var recentInSearch by androidx.compose.runtime.mutableStateOf(true)
+    fun updateRecentInSearch(v: Boolean) { recentInSearch = v; prefs?.edit()?.putBoolean("recentInSearch", v)?.apply() }
+    /** 0 = the device's system font, 1 = standard Android font (Roboto) */
+    /** True when the device exposes its own system font to apps (set by the theme). */
+    @Volatile var systemFontCustom = false
+    var fontMode by androidx.compose.runtime.mutableIntStateOf(0)
+    fun updateFontMode(v: Int) { fontMode = v; prefs?.edit()?.putInt("fontMode", v)?.apply() }
+
+    var history by androidx.compose.runtime.mutableStateOf(listOf<String>())
+    fun addHistory(q: String) {
+        val t = q.trim()
+        if (!historyOn || t.isEmpty()) return
+        history = (listOf(t) + history.filter { !it.equals(t, true) }).take(20)
+        prefs?.edit()?.putString("history", history.joinToString("\n"))?.apply()
+    }
+    fun removeHistory(q: String?) {
+        history = if (q == null) emptyList() else history - q
+        prefs?.edit()?.putString("history", history.joinToString("\n"))?.apply()
+    }
+    private fun smallFile(f: File) = filterSmall && f.length() < 30 * 1024
 
     var hideExt by androidx.compose.runtime.mutableStateOf(false)
     fun updateHideExt(v: Boolean) { hideExt = v; prefs?.edit()?.putBoolean("hideExt", v)?.apply() }
@@ -186,7 +233,7 @@ object Fs {
         )?.use { c ->
             while (c.moveToNext() && out.size < limit) {
                 val f = File(c.getString(0) ?: continue)
-                if (f.isFile && (showHidden || !f.name.startsWith("."))) out.add(entryOf(f))
+                if (f.isFile && (showHidden || !f.name.startsWith(".")) && !smallFile(f)) out.add(entryOf(f))
             }
         }
         return out
@@ -202,7 +249,7 @@ object Fs {
         )?.use { c ->
             while (c.moveToNext() && out.size < n) {
                 val f = File(c.getString(0) ?: continue)
-                if (f.isFile && (showHidden || !f.name.startsWith("."))) out.add(entryOf(f))
+                if (f.isFile && (showHidden || !f.name.startsWith(".")) && !smallFile(f)) out.add(entryOf(f))
             }
         }
         return out
@@ -270,7 +317,7 @@ object Fs {
 
     /** Never creates a trash folder on removable drives: those items are deleted permanently. */
     fun trash(src: File, onBytes: (Long) -> Unit = {}): Boolean {
-        if (isRemovable(src)) { val s = treeSize(src); return src.deleteRecursively().also { onBytes(s) } }
+        if (isRemovable(src) || !useTrash) { val s = treeSize(src); return src.deleteRecursively().also { onBytes(s) } }
         trashDir.mkdirs()
         val t = unique(trashDir, src.name)
         val ok = move(src, trashDir, onBytes)

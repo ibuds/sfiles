@@ -11,6 +11,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +41,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 fun openFile(ctx: Context, f: File) {
+    if (f.extension.equals("apk", true) && !ctx.packageManager.canRequestPackageInstalls()) {
+        // Installing needs the per-app "install unknown apps" switch; send the user there once.
+        Toast.makeText(ctx, "Allow SFiles to install apps, then open the file again.", Toast.LENGTH_LONG).show()
+        try {
+            ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+        return
+    }
     val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
     val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(f.extension.lowercase()) ?: "*/*"
     val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -54,6 +65,7 @@ private fun share(ctx: Context, files: List<File>) {
 
 private sealed interface Dlg {
     data class Details(val e: Entry) : Dlg
+    data class DetailsMulti(val items: List<Entry>) : Dlg
     data class Rename(val e: Entry) : Dlg
     object Delete : Dlg
     object Format : Dlg
@@ -86,6 +98,7 @@ fun BrowserScreen(
     val list = entries ?: emptyList()
     val sel = list.filter { it.path in selected }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val paths = remember(list) { list.map { it.path } }
 
     fun clear() { selectMode = false; selected = emptySet() }
@@ -116,6 +129,7 @@ fun BrowserScreen(
                 ScreenHeader(category?.label, onBack) {
                     OverflowMenu { close ->
                         MenuItem("Edit") { close(); selectMode = true }
+                        MenuItem(if (Fs.grid) "List view" else "Grid view") { close(); Fs.updateGrid(!Fs.grid) }
                         if (dir != null) MenuItem("Create folder") { close(); dlg = Dlg.NewFolder }
                         if (dir != null && Fs.isRemovable(dir)) {
                             MenuItem("Unmount") { close(); dlg = Dlg.Unmount }
@@ -139,6 +153,21 @@ fun BrowserScreen(
                 },
                 if (category == Category.Favorites) "Select files or folders, then tap More > Add to favorites." else null,
             )
+            else if (Fs.grid) LazyVerticalGrid(
+                GridCells.Fixed(4), Modifier.fillMaxSize().padding(horizontal = 12.dp).dragSelectGrid(gridState, paths, selected, { selected = it }, { selectMode = true }),
+                state = gridState, contentPadding = PaddingValues(top = 4.dp, bottom = 110.dp),
+            ) {
+                items(list, key = { it.path }) { e ->
+                    GridTile(
+                        e, selectMode, e.path in selected,
+                        onClick = {
+                            if (selectMode) selected = if (e.path in selected) selected - e.path else selected + e.path
+                            else if (e.isDir) onFolder(e.file) else openFile(ctx, e.file)
+                        },
+                        onLongClick = { selectMode = true; selected = selected + e.path },
+                    )
+                }
+            }
             else LazyColumn(
                 Modifier.fillMaxSize().dragSelect(listState, paths, selected, { selected = it }, { selectMode = true }),
                 state = listState, contentPadding = PaddingValues(bottom = 110.dp),
@@ -176,10 +205,8 @@ fun BrowserScreen(
                 Row(Modifier.weight(1f)) {
                     BarAction(Icons.Filled.MoreVert, "More", has) { more = true }
                     AppMenu(more, { more = false }) {
-                        if (sel.size == 1) {
-                            MenuItem("Details") { more = false; dlg = Dlg.Details(sel[0]) }
-                            MenuItem("Rename") { more = false; dlg = Dlg.Rename(sel[0]) }
-                        }
+                        MenuItem("Details") { more = false; dlg = if (sel.size == 1) Dlg.Details(sel[0]) else Dlg.DetailsMulti(sel.toList()) }
+                        if (sel.size == 1) MenuItem("Rename") { more = false; dlg = Dlg.Rename(sel[0]) }
                         MenuItem("Compress") {
                             more = false
                             val files = sel.map { it.file }
@@ -212,52 +239,58 @@ fun BrowserScreen(
 
     when (val d = dlg) {
         is Dlg.Details -> DetailsDialog(d.e) { dlg = null }
+        is Dlg.DetailsMulti -> MultiDetailsDialog(d.items) { dlg = null }
         is Dlg.Rename -> {
-            var name by remember { mutableStateOf(d.e.name) }
-            AlertDialog(
+            // With extensions hidden, only the base name is editable, so the extension can't change by accident.
+            val keepExt = Fs.hideExt && !d.e.isDir && d.e.file.extension.isNotEmpty()
+            var name by remember { mutableStateOf(if (keepExt) d.e.file.nameWithoutExtension else d.e.name) }
+            val finalName = if (keepExt) name + "." + d.e.file.extension else name
+            AppDialog(
                 onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
                 title = { Text("Rename", fontWeight = FontWeight.Bold) },
                 text = {
-                    OutlinedTextField(
-                        name, { name = it }, singleLine = true,
-                        supportingText = {
+                    AppTextField(
+                        name, { name = it }, autoFocus = true, selectAll = true,
+                        suffix = { if (keepExt) Text("." + d.e.file.extension, color = Muted) },
+                        supporting = {
                             if (name.startsWith(".")) Text("Names starting with a dot are hidden.")
-                            else if (!d.e.isDir && File(name).extension != d.e.file.extension) Text("Changing the extension changes how this file opens.")
+                            else if (!keepExt && !d.e.isDir && File(name).extension != d.e.file.extension) Text("Changing the extension changes how this file opens.")
                         },
                     )
                 },
-                confirmButton = { TextButton({ dlg = null; work { if (Fs.rename(d.e.file, name)) null else "Couldn't rename" } }) { Text("Rename") } },
+                confirmButton = { TextButton({ dlg = null; work { if (Fs.rename(d.e.file, finalName)) null else "Couldn't rename" } }, enabled = name.isNotBlank() && finalName != d.e.name) { Text("Rename") } },
                 dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
             )
         }
         Dlg.NewFolder -> {
             var n by remember { mutableStateOf("") }
-            AlertDialog(
+            AppDialog(
                 onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
                 title = { Text("Create folder", fontWeight = FontWeight.Bold) },
-                text = { OutlinedTextField(n, { n = it }, singleLine = true, placeholder = { Text("Folder name") }) },
-                confirmButton = { TextButton({ dlg = null; work { if (n.isNotBlank() && File(dir!!, n).mkdirs()) null else "Couldn't create folder" } }) { Text("Create") } },
+                text = { AppTextField(n, { n = it }, placeholder = "Folder name", autoFocus = true) },
+                confirmButton = { TextButton({ dlg = null; work { if (n.isNotBlank() && File(dir!!, n).mkdirs()) null else "Couldn't create folder" } }, enabled = n.isNotBlank()) { Text("Create") } },
                 dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
             )
         }
-        Dlg.Delete -> AlertDialog(
+        Dlg.Delete -> AppDialog(
             onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
-            title = { Text(if (sel.any { Fs.isRemovable(it.file) }) "Delete permanently?" else "Move to Trash?", fontWeight = FontWeight.Bold) },
+            title = { Text(if (!Fs.useTrash || sel.any { Fs.isRemovable(it.file) }) "Delete permanently?" else "Move to Trash?", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    if (sel.any { Fs.isRemovable(it.file) }) "Items on a USB drive can't be recovered. SFiles doesn't create a trash folder on removable drives."
+                    if (!Fs.useTrash) "${itemsText(sel.size)} will be deleted and can't be recovered."
+                    else if (sel.any { Fs.isRemovable(it.file) }) "Items on a USB drive can't be recovered. SFiles doesn't create a trash folder on removable drives."
                     else "${itemsText(sel.size)} will be moved to the trash.",
                 )
             },
             confirmButton = {
                 TextButton({
                     dlg = null; val files = sel.map { it.file }
-                    val perm = files.any { Fs.isRemovable(it) }
+                    val perm = !Fs.useTrash || files.any { Fs.isRemovable(it) }
                     op(
                         "${if (perm) "Deleting" else "Moving to Trash:"} ${itemsText(files.size)}",
                         "${if (perm) "Deleted" else "Moved to Trash:"} ${itemsText(files.size)}", files,
                     ) { cb -> if (files.all { cb(0); Fs.trash(it, cb) }) null else "Some items couldn't be deleted" }
-                }) { Text(if (sel.any { Fs.isRemovable(it.file) }) "Delete" else "Move to Trash") }
+                }) { Text(if (!Fs.useTrash || sel.any { Fs.isRemovable(it.file) }) "Delete" else "Move to Trash") }
             },
             dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
         )
@@ -320,7 +353,7 @@ private fun DetailsDialog(e: Entry, onDismiss: () -> Unit) {
                 c?.let { (f, d) -> buildString { append("$f file${if (f == 1) "" else "s"}"); if (d > 0) append(", $d folder${if (d == 1) "" else "s"}") } })
         }
     }
-    AlertDialog(
+    AppDialog(
         onDismissRequest = onDismiss, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
         title = { Text("Details", fontWeight = FontWeight.Bold) },
         text = {
@@ -334,6 +367,48 @@ private fun DetailsDialog(e: Entry, onDismiss: () -> Unit) {
                 Field("Added to device", info?.second?.let(::formatDate) ?: "…")
                 info?.third?.let { Field("Contains", it) }
                 Field("Path", Fs.displayPath(e.file))
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("OK") } },
+    )
+}
+
+/** Details for several selected items: how many, their total size (folders included) and the date ranges. */
+@Composable
+private fun MultiDetailsDialog(items: List<Entry>, onDismiss: () -> Unit) {
+    class Info(val size: Long, val files: Int, val folders: Int, val created: List<Long>)
+    val info by produceState<Info?>(null, items) {
+        value = withContext(Dispatchers.IO) {
+            var size = 0L; var files = 0; var folders = 0
+            val created = ArrayList<Long>()
+            for (e in items) {
+                size += Fs.treeSize(e.file)
+                if (e.isDir) { val (f, d) = Fs.contents(e.file); files += f; folders += d + 1 } else files++
+                Fs.createdAt(e.file).takeIf { it > 0 }?.let(created::add)
+            }
+            Info(size, files, folders, created)
+        }
+    }
+    fun range(v: List<Long>) = if (v.isEmpty()) "\u2026" else if (v.min() == v.max()) formatDate(v.min()) else formatDate(v.min()) + " - " + formatDate(v.max())
+    AppDialog(
+        onDismissRequest = onDismiss, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
+        title = { Text("Details", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val first = items.first()
+                    if (first.isDir) FolderIcon(first.file, Modifier.scale(0.9f)) else Thumb(first.file)
+                    Spacer(Modifier.width(16.dp)); Text("${items.size} items", fontSize = 17.sp)
+                }
+                Field("Total size (all folders and files)", info?.size?.let(::formatSize) ?: "Calculating\u2026")
+                Field("Last modified", range(items.map { it.modified }))
+                Field("Added to device", info?.let { range(it.created) } ?: "\u2026")
+                info?.let { i ->
+                    Field("Contains", buildString {
+                        append("${i.files} file${if (i.files == 1) "" else "s"}")
+                        if (i.folders > 0) append(", ${i.folders} folder${if (i.folders == 1) "" else "s"}")
+                    })
+                }
             }
         },
         confirmButton = { TextButton(onDismiss) { Text("OK") } },

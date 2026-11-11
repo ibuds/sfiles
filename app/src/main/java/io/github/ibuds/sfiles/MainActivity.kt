@@ -32,7 +32,6 @@ sealed interface Screen {
     object Network : Screen
     object Settings : Screen
     data class Remote(val id: String) : Screen
-    data class ConnForm(val proto: Proto, val id: String?) : Screen
     data class Folder(val path: String) : Screen
     data class Cat(val c: Category) : Screen
 }
@@ -47,12 +46,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        installCrashLog()
         Fs.init(this)
         Thread { ConnStore.all(this) }.start() // warm up the encrypted store off the main thread
         setContent {
             SFilesTheme {
                 Surface(Modifier.fillMaxSize(), color = Bg) {
                     if (granted) App(volTick) else PermissionGate()
+                    CrashReportDialog()
                 }
             }
         }
@@ -73,6 +74,18 @@ class MainActivity : ComponentActivity() {
             addDataScheme("file")
         }
         androidx.core.content.ContextCompat.registerReceiver(this, volReceiver, f, androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
+    }
+
+    /** Saves the stack trace of a crash so the next launch can show it, since not every phone makes logs easy to get. */
+    private fun installCrashLog() {
+        val file = File(filesDir, "crash.txt")
+        val old = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching {
+                file.writeText("SFiles ${packageManager.getPackageInfo(packageName, 0).versionName}\n${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\nThread: ${t.name}\n\n" + android.util.Log.getStackTraceString(e))
+            }
+            old?.uncaughtException(t, e)
+        }
     }
 
     private fun hasAllFiles(): Boolean =
@@ -123,13 +136,13 @@ private fun App(volTick: Int) {
                 .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
         } catch (_: Exception) { android.widget.Toast.makeText(ctx, "Voice search isn't available", android.widget.Toast.LENGTH_SHORT).show() }
     }
-    BackHandler(stack.size > 1) { stack.removeLast() }
+    BackHandler(stack.size > 1) { stack.removeAt(stack.lastIndex) }
 
     fun openFolder(f: File?) {
-        if (f == null) { while (stack.size > 1) stack.removeLast(); return }
+        if (f == null) { while (stack.size > 1) stack.removeAt(stack.lastIndex); return }
         val target = Screen.Folder(f.absolutePath)
         val idx = stack.indexOf(target)
-        if (idx >= 0) while (stack.lastIndex > idx) stack.removeLast() else stack.add(target)
+        if (idx >= 0) while (stack.lastIndex > idx) stack.removeAt(stack.lastIndex) else stack.add(target)
     }
 
     var prevSize by remember { mutableIntStateOf(stack.size) }
@@ -161,19 +174,16 @@ private fun App(volTick: Int) {
             onOpenFile = { openFile(ctx, it) },
             onSearch = { stack.add(Screen.Search()) },
         )
-        Screen.Trash -> TrashScreen { stack.removeLast() }
+        Screen.Trash -> TrashScreen { stack.removeAt(stack.lastIndex) }
         Screen.Network -> NetworkScreen(
-            { stack.removeLast() },
+            { stack.removeAt(stack.lastIndex) },
             onOpen = { stack.add(Screen.Remote(it.id)) },
-            onAdd = { stack.add(Screen.ConnForm(it, null)) },
-            onEdit = { stack.add(Screen.ConnForm(it.proto, it.id)) },
         )
-        is Screen.Remote -> ConnStore.get(ctx, s.id)?.let { RemoteBrowserScreen(it) { stack.removeLast() } }
-        is Screen.ConnForm -> ConnFormScreen(s.proto, s.id?.let { ConnStore.get(ctx, it) }) { stack.removeLast() }
-        Screen.Settings -> SettingsScreen { stack.removeLast() }
-        is Screen.Search -> SearchScreen(s.q, { stack.removeLast() }) { openFolder(it) }
-        is Screen.Folder -> BrowserScreen(File(s.path), null, ::openFolder, { stack.removeLast() }, { stack.add(Screen.Search()) }, { stack.add(Screen.Settings) }, startVoice)
-        is Screen.Cat -> BrowserScreen(null, s.c, ::openFolder, { stack.removeLast() }, { stack.add(Screen.Search()) }, { stack.add(Screen.Settings) }, startVoice)
+        is Screen.Remote -> ConnStore.get(ctx, s.id)?.let { RemoteBrowserScreen(it, { stack.add(Screen.Settings) }) { stack.removeAt(stack.lastIndex) } }
+        Screen.Settings -> SettingsScreen { stack.removeAt(stack.lastIndex) }
+        is Screen.Search -> SearchScreen(s.q, { stack.removeAt(stack.lastIndex) }) { openFolder(it) }
+        is Screen.Folder -> BrowserScreen(File(s.path), null, ::openFolder, { stack.removeAt(stack.lastIndex) }, { stack.add(Screen.Search()) }, { stack.add(Screen.Settings) }, startVoice)
+        is Screen.Cat -> BrowserScreen(null, s.c, ::openFolder, { stack.removeAt(stack.lastIndex) }, { stack.add(Screen.Search()) }, { stack.add(Screen.Settings) }, startVoice)
     }
         }
     }
@@ -182,4 +192,25 @@ private fun App(volTick: Int) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) { Ops.tasks.filter { !it.hidden }.forEach { t -> OpProgressCard(t, { Ops.cancel(t) }) } }
     }
+}
+
+/** After a crash, offers the saved stack trace for sharing. */
+@Composable
+private fun CrashReportDialog() {
+    val ctx = LocalContext.current
+    val file = remember { File(ctx.filesDir, "crash.txt") }
+    var text by remember { mutableStateOf(runCatching { if (file.exists()) file.readText() else null }.getOrNull()) }
+    val t = text ?: return
+    AppDialog(
+        onDismissRequest = { file.delete(); text = null }, containerColor = Sheet,
+        title = { Text("SFiles crashed last time") },
+        text = { Text("Share the error details so it can be fixed?\n\n" + t.lineSequence().take(4).joinToString("\n"), fontSize = 14.sp) },
+        confirmButton = {
+            androidx.compose.material3.TextButton({
+                ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, t), "Share crash details"))
+                file.delete(); text = null
+            }) { Text("Share") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton({ file.delete(); text = null }) { Text("Dismiss") } },
+    )
 }

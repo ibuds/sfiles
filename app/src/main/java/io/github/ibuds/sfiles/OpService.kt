@@ -112,7 +112,7 @@ class OpService : Service() {
     private fun launch(nm: NotificationManager, task: OpTask, job: OpJob) {
         active.incrementAndGet()
         nm.notify(SVC_ID, summary())
-        nm.notify(BASE + task.id, build(task))
+        if (Fs.notifications) nm.notify(BASE + task.id, build(task))
         Thread {
             val sizes = try { job.files.map { Fs.treeSize(it) } } catch (_: Exception) { job.files.map { 0L } }
             val prefix = sizes.runningFold(0L) { a, b -> a + b }.drop(1)
@@ -127,13 +127,13 @@ class OpService : Service() {
                     last = now
                     task.done = d
                     task.itemsDone = if (d > 0) prefix.count { it <= d } else 0
-                    nm.notify(BASE + task.id, build(task))
+                    if (Fs.notifications) nm.notify(BASE + task.id, build(task))
                 }
             }
             val msg = try { job.block(report) } catch (e: OpCancelled) { "Cancelled" } catch (e: Exception) { e.message ?: "Failed" }
             Ops.tasks.remove(task)
             nm.cancel(BASE + task.id)
-            nm.notify(DONE + task.id, NotificationCompat.Builder(this, CHANNEL)
+            if (Fs.notifications) nm.notify(DONE + task.id, NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done).setContentTitle(msg ?: job.doneText)
                 .setContentIntent(openApp()).setAutoCancel(true).build())
             Handler(Looper.getMainLooper()).post { job.onDone(msg) }

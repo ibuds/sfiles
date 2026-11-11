@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.FolderZip
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -77,13 +78,14 @@ fun FolderIcon(file: File? = null, modifier: Modifier = Modifier) {
 @Composable
 fun SearchPill(onClick: () -> Unit, onVoice: (() -> Unit)?, modifier: Modifier = Modifier) {
     Row(
-        modifier.width(280.dp).shadow(ShadowElev, CircleShape).background(Bar).clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
+        modifier.width(280.dp).softShadow(CircleShape).background(Bar).clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.Search, null, tint = Muted)
+        val c = Muted
+        Icon(Icons.Filled.Search, null, tint = c)
         Spacer(Modifier.width(10.dp))
-        Text("Search", color = Muted, fontSize = 16.sp, modifier = Modifier.weight(1f))
-        if (onVoice != null) Icon(Icons.Filled.Mic, "Voice search", tint = Muted, modifier = Modifier.clickable { onVoice() })
+        Text("Search", color = c, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        if (onVoice != null) Icon(Icons.Filled.Mic, "Voice search", tint = c, modifier = Modifier.clickable { onVoice() })
     }
 }
 
@@ -92,14 +94,35 @@ fun SearchPill(onClick: () -> Unit, onVoice: (() -> Unit)?, modifier: Modifier =
 fun Modifier.dragSelect(
     state: androidx.compose.foundation.lazy.LazyListState, paths: List<String>,
     selected: Set<String>, onChange: (Set<String>) -> Unit, onStart: () -> Unit,
+): Modifier = dragSelectCore(
+    state, paths, selected, onChange, onStart, { state.dispatchRawDelta(it) },
+    { _, y -> state.layoutInfo.visibleItemsInfo.firstOrNull { y >= it.offset && y < it.offset + it.size }?.index ?: -1 },
+)
+
+/** The same gesture for the grid: long-press a tile, then slide across tiles. Selects everything between the first tile and the one under the finger. */
+@Composable
+fun Modifier.dragSelectGrid(
+    state: androidx.compose.foundation.lazy.grid.LazyGridState, paths: List<String>,
+    selected: Set<String>, onChange: (Set<String>) -> Unit, onStart: () -> Unit,
+): Modifier = dragSelectCore(
+    state, paths, selected, onChange, onStart, { state.dispatchRawDelta(it) },
+    { x, y ->
+        state.layoutInfo.visibleItemsInfo.firstOrNull {
+            x >= it.offset.x && x < it.offset.x + it.size.width && y >= it.offset.y && y < it.offset.y + it.size.height
+        }?.index ?: -1
+    },
+)
+
+@Composable
+private fun Modifier.dragSelectCore(
+    key: Any, paths: List<String>, selected: Set<String>, onChange: (Set<String>) -> Unit, onStart: () -> Unit,
+    scrollBy: (Float) -> Unit, indexAt: (Float, Float) -> Int,
 ): Modifier {
     val curPaths by androidx.compose.runtime.rememberUpdatedState(paths)
     val curSel by androidx.compose.runtime.rememberUpdatedState(selected)
     val curChange by androidx.compose.runtime.rememberUpdatedState(onChange)
     val curStart by androidx.compose.runtime.rememberUpdatedState(onStart)
-    return this.pointerInput(state) {
-        fun indexAt(y: Float): Int =
-            state.layoutInfo.visibleItemsInfo.firstOrNull { y >= it.offset && y < it.offset + it.size }?.index ?: -1
+    return this.pointerInput(key) {
         awaitEachGesture {
             // Watch in the Initial pass so we see touches before the list's scroll handling does.
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -113,11 +136,12 @@ fun Modifier.dragSelect(
             } == null
             if (!timedOut) return@awaitEachGesture
 
-            val anchor = indexAt(down.position.y)
+            val anchor = indexAt(down.position.x, down.position.y)
             if (anchor !in curPaths.indices) return@awaitEachGesture
             curStart()
             val base = curSel
             curChange(base + curPaths[anchor])
+            var lastX = down.position.x
             var lastY = down.position.y
             val h = size.height.toFloat()
             while (true) {
@@ -126,10 +150,10 @@ fun Modifier.dragSelect(
                     val c = ev.changes.firstOrNull { it.id == down.id } ?: break
                     c.consume() // keep the list from scrolling and the row from treating this as a tap
                     if (!c.pressed) break
-                    lastY = c.position.y
+                    lastX = c.position.x; lastY = c.position.y
                 }
-                if (lastY < 140f) state.dispatchRawDelta(-28f) else if (lastY > h - 140f) state.dispatchRawDelta(28f)
-                val i = indexAt(lastY.coerceIn(0f, h - 1f))
+                if (lastY < 140f) scrollBy(-28f) else if (lastY > h - 140f) scrollBy(28f)
+                val i = indexAt(lastX.coerceIn(0f, size.width - 1f), lastY.coerceIn(0f, h - 1f))
                 if (i >= 0) {
                     val r = if (i >= anchor) anchor..i else i..anchor
                     curChange(base + r.mapNotNull { curPaths.getOrNull(it) })
@@ -156,8 +180,9 @@ fun Thumb(file: File, modifier: Modifier = Modifier, remote: Boolean = false) {
         else -> Icons.Outlined.InsertDriveFile to Color(0xFF8E9AAF)
     }
     // The icon sits underneath, so it shows while a thumbnail loads and whenever one can't be made.
-    Box(modifier.size(48.dp).clip(shape).background(Tile), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = tint, modifier = Modifier.fillMaxSize(0.54f))
+    val min = Fs.minimal && kind != Kind.Images && kind != Kind.Videos
+    Box(modifier.size(48.dp).clip(if (Fs.minimal) RoundedCornerShape(12.dp) else shape).background(if (min) Tint else Tile), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = if (min) Accent else tint, modifier = Modifier.fillMaxSize(0.54f))
         if (!remote && (kind == Kind.Images || kind == Kind.Videos)) {
             val req = androidx.compose.runtime.remember(file) {
                 ImageRequest.Builder(ctx).data(file).size(160)
@@ -175,10 +200,11 @@ fun EntryRow(
     onClick: () -> Unit, onLongClick: () -> Unit, subtitle: String? = null,
     remote: Boolean = false, countText: String? = null, modifier: Modifier = Modifier,
 ) {
-    Column(modifier) {
+    val min = Fs.minimal
+    Column(if (min) modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp).clip(RoundedCornerShape(16.dp)).background(if (selected) Tint else Card) else modifier) {
     Row(
         Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(start = 16.dp, end = 24.dp).height(IntrinsicSize.Min),
+            .padding(start = if (min) 12.dp else 16.dp, end = if (min) 16.dp else 24.dp).height(IntrinsicSize.Min),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AnimatedVisibility(
@@ -186,11 +212,15 @@ fun EntryRow(
             enter = expandHorizontally(tween(220)) + fadeIn(tween(220)),
             exit = shrinkHorizontally(tween(180)) + fadeOut(tween(150)),
         ) { Row(verticalAlignment = Alignment.CenterVertically) { Check(selected); Spacer(Modifier.width(14.dp)) } }
-        Box(Modifier.width(48.dp).padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-            if (e.isDir) FolderIcon(if (remote) null else e.file) else Thumb(e.file, remote = remote)
+        Box(Modifier.width(48.dp).padding(vertical = 15.dp), contentAlignment = Alignment.Center) {
+            if (e.isDir) {
+                if (min) Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Tint), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Folder, null, tint = Accent, modifier = Modifier.size(26.dp))
+                } else FolderIcon(if (remote) null else e.file)
+            } else Thumb(e.file, remote = remote)
         }
         Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
+        Column(Modifier.weight(1f).padding(vertical = 15.dp)) {
             Text(e.label, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle ?: formatDate(e.modified), fontSize = 13.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -201,9 +231,29 @@ fun EntryRow(
         )
     }
     val dividerStart by androidx.compose.animation.core.animateDpAsState(if (selectMode) 94.dp else 80.dp, tween(220), label = "divider")
-    androidx.compose.material3.HorizontalDivider(
+    if (!min) androidx.compose.material3.HorizontalDivider(
         Modifier.padding(start = dividerStart, end = 24.dp), thickness = 0.7.dp, color = Divider,
     )
+    }
+}
+
+/** One cell of the 4-column grid view: icon or thumbnail above a two-line name. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun GridTile(e: Entry, selectMode: Boolean, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.padding(4.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Tint else Color.Transparent).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                if (e.isDir) {
+                    if (Fs.minimal) Box(Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(Tint), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Folder, null, tint = Accent, modifier = Modifier.size(30.dp))
+                    } else FolderIcon(e.file)
+                } else Thumb(e.file, Modifier.size(52.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(e.label, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 15.sp)
+        }
+        if (selectMode) Box(Modifier.padding(6.dp).align(Alignment.TopStart)) { Check(selected) }
     }
 }
 
@@ -228,28 +278,7 @@ fun Breadcrumb(dir: File, onNavigate: (File?) -> Unit, modifier: Modifier = Modi
     val parts = ArrayList<File>()
     var f: File? = dir
     while (f != null && f.absolutePath.length > vol.dir.absolutePath.length) { parts.add(0, f); f = f.parentFile }
-    Row(
-        modifier.fillMaxWidth().clip(CircleShape).background(bg).padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Filled.Home, "Home", tint = Muted, modifier = Modifier.size(22.dp).clickable { onNavigate(null) })
-        Sep()
-        val rootLast = parts.isEmpty()
-        Text(
-            vol.label, fontSize = 15.sp,
-            color = if (rootLast) Accent else Muted, fontWeight = if (rootLast) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.clickable { onNavigate(vol.dir) },
-        )
-        parts.forEachIndexed { i, p ->
-            Sep()
-            val last = i == parts.lastIndex
-            Text(
-                p.name, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = if (last) Accent else Muted, fontWeight = if (last) FontWeight.Bold else FontWeight.Normal,
-                modifier = Modifier.clickable { onNavigate(p) },
-            )
-        }
-    }
+    Crumbs(listOf(vol.label) + parts.map { it.name }, { onNavigate(null) }, { i -> onNavigate(if (i == 0) vol.dir else parts[i - 1]) }, modifier, bg)
 }
 
 @Composable

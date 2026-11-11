@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -29,6 +30,8 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,11 +54,13 @@ import java.io.File
 
 /** List of saved connections, or the empty state with the add button. */
 @Composable
-fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit, onAdd: (Proto) -> Unit, onEdit: (Conn) -> Unit) {
+fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit) {
     val ctx = LocalContext.current
     var tick by remember { mutableIntStateOf(0) }
     val conns = remember(tick) { ConnStore.all(ctx) }
     var addDialog by remember { mutableStateOf(false) }
+    var smbScan by remember { mutableStateOf(false) }
+    var form by remember { mutableStateOf<FormReq?>(null) }
     var menuFor by remember { mutableStateOf<Conn?>(null) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -90,98 +95,154 @@ fun NetworkScreen(onBack: () -> Unit, onOpen: (Conn) -> Unit, onAdd: (Proto) -> 
             }
         }
     }
-    if (addDialog) androidx.compose.ui.window.Dialog({ addDialog = false }) {
-        Column(Modifier.clip(RoundedCornerShape(28.dp)).background(Sheet).padding(vertical = 24.dp)) {
-            Text("Add network storage", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-            Proto.values().forEach { p ->
-                Text(
-                    p.label, fontSize = 18.sp,
-                    modifier = Modifier.fillMaxWidth().clickable { addDialog = false; onAdd(p) }.padding(horizontal = 24.dp, vertical = 16.dp),
-                )
-            }
-            Text("Cancel", fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().clickable { addDialog = false }.padding(top = 16.dp))
+    if (addDialog) AppSheet({ addDialog = false }) {
+        Text("Add network storage", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
+        Proto.values().forEach { p ->
+            Text(
+                p.label, fontSize = 18.sp,
+                modifier = Modifier.fillMaxWidth().clickable { addDialog = false; if (p == Proto.SMB) smbScan = true else form = FormReq(p, null, null) }.padding(vertical = 18.dp),
+            )
         }
+        DialogButtonRow(left = null, right = { TextButton({ addDialog = false }) { Text("Cancel") } })
     }
+    if (smbScan) SmbDiscoveryDialog({ smbScan = false }, { smbScan = false; form = FormReq(Proto.SMB, null, null) }) { smbScan = false; form = FormReq(Proto.SMB, null, it) }
+    form?.let { r -> ConnFormDialog(r.proto, r.existing, r.host, { form = null }) { form = null; tick++ } }
     menuFor?.let { c ->
-        AlertDialog(
+        AppDialog(
             onDismissRequest = { menuFor = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
             title = { Text(c.name, fontWeight = FontWeight.Bold) },
-            confirmButton = { TextButton({ menuFor = null; onEdit(c) }) { Text("Edit") } },
+            confirmButton = { TextButton({ menuFor = null; form = FormReq(c.proto, c, null) }) { Text("Edit") } },
             dismissButton = { TextButton({ ConnStore.remove(ctx, c.id); menuFor = null; tick++ }) { Text("Remove") } },
         )
     }
 }
 
-/** Add / edit form. Tests the connection before saving. */
+/** "Select a network drive": scans the Wi-Fi network for SMB servers, or add one by hand. */
 @Composable
-fun ConnFormScreen(proto: Proto, existing: Conn?, onDone: () -> Unit) {
+private fun SmbDiscoveryDialog(onDismiss: () -> Unit, onManual: () -> Unit, onPick: (String) -> Unit) {
+    val found by produceState<List<Found>?>(null) { value = withContext(Dispatchers.IO) { runCatching { discoverSmb() }.getOrDefault(emptyList()) } }
+    AppSheet(onDismiss) {
+        Text("Select a network drive", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
+        val list = found
+        if (list == null) Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(20.dp))
+            Text("Looking for drives on current network\u2026", fontSize = 15.sp, color = Muted)
+        } else if (list.isEmpty()) Text("No drives found on this network.", fontSize = 15.sp, color = Muted, modifier = Modifier.padding(vertical = 40.dp))
+        else list.forEach { f ->
+            Row(Modifier.fillMaxWidth().clickable { onPick(f.host) }.padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Tint), contentAlignment = Alignment.Center) {
+                    Text("SMB", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Accent)
+                }
+                Spacer(Modifier.width(16.dp))
+                Column { Text(f.name, fontSize = 17.sp); Text("${f.host}:445", fontSize = 13.sp, color = Muted) }
+            }
+        }
+        DialogButtonRow(left = { TextButton(onDismiss) { Text("Cancel") } }, right = { TextButton(onManual) { Text("Add manually") } })
+    }
+}
+
+private data class FormReq(val proto: Proto, val existing: Conn?, val host: String?)
+
+/** Add / edit sheet. Tests the connection before saving. */
+@Composable
+private fun ConnFormDialog(proto: Proto, existing: Conn?, prefillHost: String?, onDismiss: () -> Unit, onSaved: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf(existing?.name ?: "") }
-    var host by remember { mutableStateOf(existing?.host ?: "") }
+    var host by remember { mutableStateOf(existing?.host ?: prefillHost ?: "") }
     var port by remember { mutableStateOf((existing?.port ?: proto.defaultPort).toString()) }
     var user by remember { mutableStateOf(existing?.user ?: "") }
     var pass by remember { mutableStateOf(existing?.pass ?: "") }
     var anon by remember { mutableStateOf(existing?.anonymous ?: false) }
     var path by remember { mutableStateOf(existing?.path ?: "") }
+    var tls by remember { mutableStateOf(existing?.ftpTls ?: false) }
+    var implicit by remember { mutableStateOf(existing?.ftpImplicit ?: false) }
+    var active by remember { mutableStateOf(existing?.ftpActive ?: false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val canAnon = proto != Proto.SFTP
+    val ready = host.isNotBlank() && (proto != Proto.SMB || path.isNotBlank())
 
     fun save() {
         val c = Conn(
             existing?.id ?: java.util.UUID.randomUUID().toString(), proto,
-            name.ifBlank { host }, host.trim(), port.toIntOrNull() ?: proto.defaultPort,
+            name.ifBlank { host.trim() }, host.trim(), port.toIntOrNull() ?: proto.defaultPort,
             user.trim(), pass, anon && canAnon, path.trim(),
+            proto == Proto.FTP && tls, proto == Proto.FTP && tls && implicit, proto == Proto.FTP && active,
         )
-        if (c.host.isEmpty()) { error = "Enter a server address"; return }
-        if (proto == Proto.SMB && c.path.isEmpty()) { error = "Enter the share name"; return }
         busy = true; error = null
         scope.launch {
             val err = withContext(Dispatchers.IO) {
                 try { openRemote(ctx, c).use { it.list(startPath(it, c)) }; null } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
             }
             busy = false
-            if (err == null) { ConnStore.put(ctx, c); onDone() } else error = "Couldn't connect: $err"
+            if (err == null) { ConnStore.put(ctx, c); onSaved() } else error = "Couldn't connect: $err"
         }
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
-        ScreenHeader(proto.label, onDone)
-        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Field("Name (optional)", name) { name = it }
-            Field("Server address", host, KeyboardType.Uri) { host = it }
-            Field("Port", port, KeyboardType.Number) { port = it.filter(Char::isDigit) }
-            if (proto == Proto.SMB) Field("Share name", path) { path = it }
-            else Field("Start folder (optional)", path) { path = it }
-            if (canAnon) Row(Modifier.fillMaxWidth().clickable { anon = !anon }, verticalAlignment = Alignment.CenterVertically) {
-                Text(if (proto == Proto.SMB) "Guest login" else "Anonymous", Modifier.weight(1f), fontSize = 16.sp)
-                Switch(anon, { anon = it })
+    AppSheet(onDismiss) {
+        Text(proto.label, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            UField("Address", host, KeyboardType.Uri) { host = it }
+            UField("Port", port, KeyboardType.Number) { port = it.filter(Char::isDigit) }
+            if (proto == Proto.SMB) UField("Share name", path) { path = it }
+            if (proto == Proto.FTP) Choice("Security", if (tls) "SSL/TLS" else "None", listOf("None", "SSL/TLS")) {
+                tls = it == 1
+                if (!tls && port == "990") port = "21"
             }
-            if (!anon || !canAnon) {
-                Field("Username", user) { user = it }
-                Field("Password", pass, KeyboardType.Password, hide = true) { pass = it }
+            UField("Username", user, enabled = !anon) { user = it }
+            UField("Password", pass, KeyboardType.Password, secret = true, enabled = !anon) { pass = it }
+            if (canAnon) Row(Modifier.fillMaxWidth().offset(x = (-12).dp).clickable { anon = !anon }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(anon, { anon = it })
+                Text("Sign in anonymously", fontSize = 16.sp)
             }
-            error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 14.sp) }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton(onDone, enabled = !busy) { Text("Cancel", fontSize = 17.sp) }
-                Button(::save, enabled = !busy) {
-                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-                    else Text("Save", fontSize = 17.sp)
+            if (proto == Proto.FTP) {
+                if (tls) Choice("Encryption", if (implicit) "Implicit" else "Explicit", listOf("Explicit", "Implicit")) {
+                    implicit = it == 1
+                    if (implicit && port == "21") port = "990" else if (!implicit && port == "990") port = "21"
                 }
+                Choice("Transfer mode", if (active) "Active" else "Passive", listOf("Passive", "Active")) { active = it == 1 }
             }
+            if (proto != Proto.SMB) UField("Start folder (optional)", path) { path = it }
+            UField("Display name", name) { name = it }
+            error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 14.sp) }
         }
+        Spacer(Modifier.height(16.dp))
+        DialogButtonRow(
+            left = { TextButton(onDismiss, enabled = !busy) { Text("Cancel") } },
+            right = {
+                TextButton(::save, enabled = !busy && ready) {
+                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    else Text(if (existing != null) "Save" else "Add")
+                }
+            },
+        )
     }
 }
 
 @Composable
-private fun Field(label: String, value: String, type: KeyboardType = KeyboardType.Text, hide: Boolean = false, onChange: (String) -> Unit) {
-    OutlinedTextField(
-        value, onChange, label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-        keyboardOptions = KeyboardOptions(keyboardType = type),
-        visualTransformation = if (hide) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-    )
+private fun UField(
+    label: String, value: String, type: KeyboardType = KeyboardType.Text, secret: Boolean = false, enabled: Boolean = true, onChange: (String) -> Unit,
+) = AppTextField(value, onChange, label = label, enabled = enabled, keyboardType = type, secret = secret)
+
+/** Underlined dropdown that matches [UField]. */
+@Composable
+private fun Choice(label: String, value: String, options: List<String>, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Column(Modifier.fillMaxWidth().clickable { open = true }.padding(top = 8.dp)) {
+            Text(label, fontSize = 12.sp, color = Accent)
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(value, Modifier.weight(1f), fontSize = 17.sp)
+                Icon(Icons.Filled.ArrowDropDown, null)
+            }
+            HorizontalDivider(color = Divider)
+        }
+        AppMenu(open, { open = false }) {
+            options.forEachIndexed { i, o -> DropdownMenuItem(text = { Text(o) }, onClick = { open = false; onPick(i) }) }
+        }
+    }
 }
 
 private sealed interface RDlg {
@@ -191,7 +252,7 @@ private sealed interface RDlg {
 }
 
 @Composable
-fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
+fun RemoteBrowserScreen(conn: Conn, onSettings: () -> Unit, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val lock = remember { Mutex() }
@@ -209,8 +270,17 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
 
     suspend fun <T> withFs(block: (RemoteFs) -> T): T = lock.withLock {
         withContext(Dispatchers.IO) {
-            val fs = holder[0] ?: openRemote(ctx, conn).also { holder[0] = it }
-            block(fs)
+            // A cached connection can die (idle timeout, Wi-Fi change). Drop it on any error so the next
+            // call reconnects, and retry once right away when the failed connection was an old one.
+            fun drop() { val f = holder[0]; holder[0] = null; if (f != null) runCatching { f.close() } }
+            val cached = holder[0]
+            try {
+                block(cached ?: openRemote(ctx, conn).also { holder[0] = it })
+            } catch (e: Exception) {
+                drop()
+                if (cached == null) throw e
+                try { block(openRemote(ctx, conn).also { holder[0] = it }) } catch (e2: Exception) { drop(); throw e2 }
+            }
         }
     }
     fun toast(m: String) = Toast.makeText(ctx, m, Toast.LENGTH_SHORT).show()
@@ -240,20 +310,6 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
     val cur = path
     BackHandler(!selectMode && cur != null && root != null && cur != root) { path = parentPath(cur!!) }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
-        if (uris.isEmpty() || cur == null) return@rememberLauncherForActivityResult
-        run("Uploaded ${itemsText(uris.size)}") { fs ->
-            for (u in uris) {
-                val name = ctx.contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                    if (c.moveToFirst()) c.getString(0) else null
-                } ?: "upload"
-                val tmp = File(ctx.cacheDir, "up_$name")
-                ctx.contentResolver.openInputStream(u)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
-                try { fs.upload(tmp, joinPath(cur, name)) } finally { tmp.delete() }
-            }
-        }
-    }
-
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             if (selectMode) {
@@ -263,35 +319,18 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
             } else {
                 ScreenHeader(null, onBack) {
                     OverflowMenu { close ->
-                        MenuItem("Upload files") { close(); picker.launch(arrayOf("*/*")) }
-                        MenuItem("New folder") { close(); dlg = RDlg.NewFolder }
-                        MenuItem("Refresh") { close(); tick++ }
+                        MenuItem("Sync") { close(); tick++ }
+                        MenuItem("Select") { close(); selectMode = true }
+                        MenuItem("Create folder") { close(); dlg = RDlg.NewFolder }
+                        MenuItem("Settings") { close(); onSettings() }
                     }
                 }
             }
             // breadcrumb: home > connection name > folders
-            Row(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(CircleShape).background(Pill).padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Filled.Home, null, tint = Muted, modifier = Modifier.size(22.dp).clickable { onBack() })
-                val base = root ?: "/"
-                val segs = (cur ?: base).removePrefix(base).split('/').filter { it.isNotEmpty() }
-                Icon(Icons.Outlined.ChevronRight, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
-                Text(
-                    conn.name, fontSize = 15.sp, maxLines = 1,
-                    color = if (segs.isEmpty()) Accent else Muted, fontWeight = if (segs.isEmpty()) FontWeight.Bold else FontWeight.Normal,
-                    modifier = Modifier.clickable { path = base },
-                )
-                var acc = base
-                segs.forEachIndexed { i, s ->
-                    acc = joinPath(acc, s); val target = acc
-                    Icon(Icons.Outlined.ChevronRight, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
-                    val last = i == segs.lastIndex
-                    Text(s, fontSize = 15.sp, maxLines = 1, color = if (last) Accent else Muted,
-                        fontWeight = if (last) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.clickable { path = target })
-                }
-            }
+            val base = root ?: "/"
+            val segs = (cur ?: base).removePrefix(base).split('/').filter { it.isNotEmpty() }
+            val targets = segs.runningFold(base) { acc, seg -> joinPath(acc, seg) } // targets[0] = base
+            Crumbs(listOf(conn.name) + segs, onBack, { i -> path = targets[i] }, Modifier.padding(horizontal = 16.dp))
             Spacer(Modifier.height(8.dp))
             when {
                 listing == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -346,25 +385,25 @@ fun RemoteBrowserScreen(conn: Conn, onBack: () -> Unit) {
     when (val d = dlg) {
         is RDlg.Rename -> {
             var n by remember { mutableStateOf(d.i.name) }
-            AlertDialog(
+            AppDialog(
                 onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
                 title = { Text("Rename", fontWeight = FontWeight.Bold) },
-                text = { OutlinedTextField(n, { n = it }, singleLine = true) },
-                confirmButton = { TextButton({ dlg = null; run("Renamed") { fs -> fs.rename(d.i.path, joinPath(parentPath(d.i.path), n)) } }) { Text("Rename") } },
+                text = { AppTextField(n, { n = it }, autoFocus = true, selectAll = true) },
+                confirmButton = { TextButton({ dlg = null; run("Renamed") { fs -> fs.rename(d.i.path, joinPath(parentPath(d.i.path), n)) } }, enabled = n.isNotBlank() && n != d.i.name) { Text("Rename") } },
                 dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
             )
         }
         RDlg.NewFolder -> {
             var n by remember { mutableStateOf("") }
-            AlertDialog(
+            AppDialog(
                 onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
                 title = { Text("Create folder", fontWeight = FontWeight.Bold) },
-                text = { OutlinedTextField(n, { n = it }, singleLine = true, placeholder = { Text("Folder name") }) },
-                confirmButton = { TextButton({ dlg = null; if (n.isNotBlank() && cur != null) run("Folder created") { fs -> fs.mkdir(joinPath(cur, n)) } }) { Text("Create") } },
+                text = { AppTextField(n, { n = it }, placeholder = "Folder name", autoFocus = true) },
+                confirmButton = { TextButton({ dlg = null; if (n.isNotBlank() && cur != null) run("Folder created") { fs -> fs.mkdir(joinPath(cur, n)) } }, enabled = n.isNotBlank()) { Text("Create") } },
                 dismissButton = { TextButton({ dlg = null }) { Text("Cancel") } },
             )
         }
-        RDlg.Delete -> AlertDialog(
+        RDlg.Delete -> AppDialog(
             onDismissRequest = { dlg = null }, containerColor = Sheet, shape = RoundedCornerShape(28.dp),
             title = { Text("Delete permanently?", fontWeight = FontWeight.Bold) },
             text = { Text("${itemsText(sel.size)} will be deleted from the server. This can't be undone.") },

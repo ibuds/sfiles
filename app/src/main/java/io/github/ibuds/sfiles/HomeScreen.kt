@@ -58,7 +58,7 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("SFiles", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("SFiles", fontSize = if (Fs.minimal) 28.sp else 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 OverflowMenu { close -> MenuItem("Settings") { close(); onSettings() } }
             }
             Column(Modifier.padding(horizontal = 16.dp)) {
@@ -72,9 +72,10 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
                                     Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable { onCategory(c.c) }.padding(vertical = 10.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Box(Modifier.size(48.dp).clip(CircleShape).background(c.fg.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
-                                        if (c.icon != null) Icon(c.icon, null, tint = c.fg, modifier = Modifier.size(24.dp))
-                                        else Text("APK", color = c.fg, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    val fg = if (Fs.minimal) Accent else c.fg
+                                    Box(Modifier.size(48.dp).clip(if (Fs.minimal) RoundedCornerShape(14.dp) else CircleShape).background(if (Fs.minimal) Tint else c.fg.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
+                                        if (c.icon != null) Icon(c.icon, null, tint = fg, modifier = Modifier.size(24.dp))
+                                        else Text("APK", color = fg, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     }
                                     Spacer(Modifier.width(14.dp))
                                     Text(c.c.label, fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -85,10 +86,11 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
                 }
             }
             Spacer(Modifier.height(12.dp))
-            ThumbCard("Recent files", onRecent, recentOrNull != null && recent.isEmpty(), "No recent files", recent, onOpenFile)
-            Spacer(Modifier.height(12.dp))
-            ThumbCard("Favorites", onFavorites, favs.isEmpty(), "No favorites yet. Select items, then More > Add to favorites.", favs) { f ->
-                if (f.isDirectory) onFolder(f) else onOpenFile(f)
+            // Empty cards stay hidden.
+            if (recent.isNotEmpty()) { ThumbCard("Recent files", onRecent, recent, onOpenFile); Spacer(Modifier.height(12.dp)) }
+            if (favs.isNotEmpty()) {
+                ThumbCard("Favorites", onFavorites, favs) { f -> if (f.isDirectory) onFolder(f) else onOpenFile(f) }
+                Spacer(Modifier.height(12.dp))
             }
             SectionLabel("Storage")
             Card {
@@ -111,15 +113,15 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
                             Column(horizontalAlignment = Alignment.End) {
                                 Text("${formatSize(used)} / ${formatSize(total)}", fontSize = 12.sp)
                                 Spacer(Modifier.height(6.dp))
-                                LinearProgressIndicator(
-                                    progress = { used.toFloat() / total.coerceAtLeast(1) }, modifier = Modifier.width(110.dp).height(8.dp).clip(CircleShape),
-                                    color = Color(0xFF3FB59B), trackColor = Chip, drawStopIndicator = {},
-                                )
+                                AppProgressBar(used.toFloat() / total.coerceAtLeast(1), Modifier.width(110.dp).height(8.dp), if (Fs.minimal) Accent else Color(0xFF3FB59B))
                             }
                         }
-                        AppMenu(driveMenu == v.dir.absolutePath, { driveMenu = null }) {
-                            MenuItem("Unmount") { driveMenu = null; driveDialog = true }
-                            MenuItem("Format drive") { driveMenu = null; driveDialog = false }
+                        // Anchored to the right edge of the row so the menu opens on the right.
+                        Box(Modifier.align(Alignment.TopEnd)) {
+                            AppMenu(driveMenu == v.dir.absolutePath, { driveMenu = null }) {
+                                MenuItem("Unmount") { driveMenu = null; driveDialog = true }
+                                MenuItem("Format drive") { driveMenu = null; driveDialog = false }
+                            }
                         }
                         }
                     }
@@ -142,7 +144,7 @@ fun HomeScreen(volTick: Int, onVoice: () -> Unit, onRecent: () -> Unit, onFavori
 
 @Composable
 private fun Card(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(io.github.ibuds.sfiles.Card)) { content() }
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(if (Fs.minimal) 20.dp else 26.dp)).background(io.github.ibuds.sfiles.Card)) { content() }
 }
 
 @Composable
@@ -162,7 +164,7 @@ private fun StorageRow(icon: ImageVector, title: String, sub: String?, onClick: 
 
 /** Titled card with a horizontal row of thumbnails; the whole title row opens the full list. */
 @Composable
-private fun ThumbCard(title: String, onTitle: () -> Unit, empty: Boolean, emptyText: String, items: List<Entry>, onItem: (File) -> Unit) {
+private fun ThumbCard(title: String, onTitle: () -> Unit, items: List<Entry>, onItem: (File) -> Unit) {
     Card {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).clip(RoundedCornerShape(12.dp)).clickable { onTitle() }, verticalAlignment = Alignment.CenterVertically) {
@@ -170,7 +172,6 @@ private fun ThumbCard(title: String, onTitle: () -> Unit, empty: Boolean, emptyT
                 Icon(Icons.Outlined.ChevronRight, "See all")
             }
             Spacer(Modifier.height(12.dp))
-            if (empty) Text(emptyText, fontSize = 14.sp, color = Muted, modifier = Modifier.padding(bottom = 4.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items.forEach { e ->
                     Column(Modifier.width(82.dp).clickable { onItem(e.file) }) {

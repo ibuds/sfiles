@@ -1,3 +1,5 @@
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Properties
 
 plugins {
@@ -17,8 +19,9 @@ android {
         applicationId = "io.github.ibuds.sfiles"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
+        manifestPlaceholders["appLabel"] = "SFiles"
     }
     signingConfigs {
         create("release") {
@@ -31,6 +34,12 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Installs next to the release app instead of replacing it.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug." + SimpleDateFormat("MMdd.HHmm").format(Date()) // shown in Settings > About
+            manifestPlaceholders["appLabel"] = "SFiles Debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

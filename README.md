@@ -28,7 +28,7 @@ Grab the latest signed APK from the [Releases page](https://github.com/ibuds/sfi
 Each release ships a `.sha256` file so you can verify the download:
 
 ```bash
-shasum -a 256 -c SFiles-1.0.2.apk.sha256
+shasum -a 256 -c SFiles-1.0.3.apk.sha256
 ```
 
 ## Screenshots
@@ -48,7 +48,7 @@ Captured on Android 8.0 (the minimum supported version) and Android 17.
 ### Browse
 
 - Home screen with category shortcuts (Downloads, Docs, Images, Audio, Videos, Install files), recent files and storage usage
-- Folder browser with breadcrumb, filter, sorting and list view
+- Folder browser with a scrollable breadcrumb, filter, sorting, and list or grid view
 - Search across storage, with voice input
 - Favorites on Home, plus Hide / Unhide for any file or folder
 - Hidden files toggle (Hide renames an item to start with `.`) and a Hide file extensions toggle
@@ -56,8 +56,8 @@ Captured on Android 8.0 (the minimum supported version) and Android 17.
 
 ### Operate
 
-- Multi-select: long-press, then drag across rows to select a range
-- Move, copy, share, delete, rename, compress (zip) and file details
+- Multi-select: long-press, then slide across rows or tiles to select a range
+- Move, copy, share, delete, rename, compress (zip) and file details, also for several items at once (total size, dates, file count)
 - Several operations at once, each with its own card and notification, remaining time and item count
 - Progress for copy, move, compress, delete and restore, in the app and in a notification, with a Cancel button
 - Trash with 30-day retention (internal storage); permanent delete on removable drives
@@ -66,7 +66,7 @@ Captured on Android 8.0 (the minimum supported version) and Android 17.
 
 - USB drives and SD cards shown with their filesystem (FAT32, exFAT, NTFS)
 - Unmount and Format shortcuts for removable drives (long-press the drive on Home, or use the menu inside it). Android only allows these from system Settings, so SFiles opens the right screen
-- Network storage over **FTP**, **SFTP** and **SMB (v2/v3)**: browse, open, download, upload, rename, delete
+- Network storage over **FTP** (plain or TLS), **SFTP** and **SMB (v2/v3)**, with automatic discovery of SMB drives on your Wi-Fi: browse, open, download, rename, delete, create folders
 
 > SFiles never creates folders on removable drives on its own.
 

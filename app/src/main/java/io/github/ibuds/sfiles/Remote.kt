@@ -20,6 +20,7 @@ import com.jcraft.jsch.Session
 import com.jcraft.jsch.UserInfo
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
+import org.apache.commons.net.ftp.FTPSClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
@@ -28,7 +29,7 @@ import java.util.EnumSet
 import java.util.UUID
 
 enum class Proto(val label: String, val defaultPort: Int) {
-    FTP("FTP server", 21), SFTP("SFTP server", 22), SMB("Network drive (SMB)", 445)
+    FTP("FTP server", 21), SFTP("SFTP server", 22), SMB("Network drive (SMBv2/SMBv3)", 445)
 }
 
 data class Conn(
@@ -37,14 +38,18 @@ data class Conn(
     val user: String, val pass: String, val anonymous: Boolean,
     /** SMB: share name (required). FTP/SFTP: optional start directory. */
     val path: String = "",
+    /** FTP only: encrypt with TLS (explicit or implicit), and use active instead of passive mode. */
+    val ftpTls: Boolean = false, val ftpImplicit: Boolean = false, val ftpActive: Boolean = false,
 ) {
     val url: String get() = "${proto.name.lowercase()}://$host${if (port != proto.defaultPort) ":$port" else ""}"
     fun toJson() = JSONObject().put("id", id).put("proto", proto.name).put("name", name).put("host", host).put("port", port)
         .put("user", user).put("pass", pass).put("anon", anonymous).put("path", path)
+        .put("tls", ftpTls).put("implicit", ftpImplicit).put("active", ftpActive)
     companion object {
         fun fromJson(o: JSONObject) = Conn(
             o.getString("id"), Proto.valueOf(o.getString("proto")), o.getString("name"), o.getString("host"), o.getInt("port"),
             o.optString("user"), o.optString("pass"), o.optBoolean("anon"), o.optString("path"),
+            o.optBoolean("tls"), o.optBoolean("implicit"), o.optBoolean("active"),
         )
     }
 }
@@ -103,13 +108,15 @@ fun openRemote(ctx: Context, c: Conn): RemoteFs = when (c.proto) {
 }
 
 private class FtpFs(c: Conn) : RemoteFs {
-    private val ftp = FTPClient()
+    private val ftp: FTPClient = if (c.ftpTls) FTPSClient(c.ftpImplicit) else FTPClient()
     init {
         ftp.connectTimeout = 15000; ftp.defaultTimeout = 30000
         ftp.connect(c.host, c.port)
         val ok = if (c.anonymous) ftp.login("anonymous", "sfiles@localhost") else ftp.login(c.user, c.pass)
         if (!ok) { runCatching { ftp.disconnect() }; error("Login failed") }
-        ftp.enterLocalPassiveMode(); ftp.setFileType(FTP.BINARY_FILE_TYPE); ftp.controlEncoding = "UTF-8"
+        if (ftp is FTPSClient) { ftp.execPBSZ(0); ftp.execPROT("P") }
+        if (c.ftpActive) ftp.enterLocalActiveMode() else ftp.enterLocalPassiveMode()
+        ftp.setFileType(FTP.BINARY_FILE_TYPE); ftp.controlEncoding = "UTF-8"
         if (c.path.isNotBlank()) ftp.changeWorkingDirectory(c.path)
     }
     fun cwd(): String = ftp.printWorkingDirectory() ?: "/"
@@ -223,4 +230,38 @@ fun startPath(fs: RemoteFs, c: Conn): String = when (fs) {
         fs is SftpFs -> fs.cwd()
         else -> "/"
     }
+}
+
+/** A machine on the local network that answers on the SMB port. */
+data class Found(val name: String, val host: String)
+
+private fun localSubnetHosts(): List<String> {
+    for (ni in java.net.NetworkInterface.getNetworkInterfaces().toList()) {
+        if (!ni.isUp || ni.isLoopback) continue
+        val a = ni.interfaceAddresses.firstOrNull { it.address is java.net.Inet4Address && it.address.isSiteLocalAddress } ?: continue
+        val b = a.address.address.map { it.toInt() and 255 }
+        return (1..254).filter { it != b[3] }.map { "${b[0]}.${b[1]}.${b[2]}.$it" }
+    }
+    return emptyList()
+}
+
+/** Scans the phone's own /24 for open SMB ports (about 3 seconds). Blocking: call it off the main thread. */
+fun discoverSmb(): List<Found> {
+    val pool = java.util.concurrent.Executors.newFixedThreadPool(48)
+    try {
+        val open = pool.invokeAll(localSubnetHosts().map { h ->
+            java.util.concurrent.Callable {
+                try { java.net.Socket().use { it.connect(java.net.InetSocketAddress(h, 445), 500) }; h } catch (_: Exception) { null }
+            }
+        }).mapNotNull { it.get() }
+        val names = open.map { h ->
+            pool.submit(java.util.concurrent.Callable {
+                runCatching { java.net.InetAddress.getByName(h).canonicalHostName }.getOrNull()
+                    ?.takeIf { it != h }?.substringBefore('.')?.takeIf { it.isNotBlank() } ?: h
+            })
+        }
+        return open.indices.map { i ->
+            Found(runCatching { names[i].get(1500, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrDefault(open[i]), open[i])
+        }.sortedBy { it.host.substringAfterLast('.').toInt() }
+    } finally { pool.shutdownNow() }
 }

@@ -63,11 +63,11 @@ fun FolderPicker(start: File, actionLabel: String, onDismiss: () -> Unit, onPick
     }
     if (newFolder) {
         var name by remember { mutableStateOf("") }
-        AlertDialog(
+        AppDialog(
             onDismissRequest = { newFolder = false }, containerColor = Sheet,
             title = { Text("Create folder") },
-            text = { OutlinedTextField(name, { name = it }, singleLine = true, placeholder = { Text("Folder name") }) },
-            confirmButton = { TextButton({ if (name.isNotBlank()) File(cur, name).mkdirs(); newFolder = false; tick++ }) { Text("Create") } },
+            text = { AppTextField(name, { name = it }, placeholder = "Folder name", autoFocus = true) },
+            confirmButton = { TextButton({ if (name.isNotBlank()) File(cur, name).mkdirs(); newFolder = false; tick++ }, enabled = name.isNotBlank()) { Text("Create") } },
             dismissButton = { TextButton({ newFolder = false }) { Text("Cancel") } },
         )
     }
